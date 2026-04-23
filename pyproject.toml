@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wave-data"
+version = "0.1.0"
+description = "Download and unify Mooloolaba wave buoy data from the Queensland Government CKAN portal."
+requires-python = ">=3.14"
+dependencies = [
+    "pandas>=2.3",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+notebooks = [
+    "ipykernel",
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",
+]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
