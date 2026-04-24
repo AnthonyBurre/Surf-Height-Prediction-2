@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/check_claude_md.py"
+          }
+        ]
+      }
+    ]
+  }
+}
