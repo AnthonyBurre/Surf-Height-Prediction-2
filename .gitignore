@@ -12,6 +12,7 @@ dist/
 
 # Notebooks
 .ipynb_checkpoints/
+*/figures/*
 
 # macOS
 .DS_Store

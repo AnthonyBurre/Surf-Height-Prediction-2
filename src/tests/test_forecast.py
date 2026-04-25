@@ -34,7 +34,7 @@ def _synthetic_df(n: int = 200, freq: str = "30min", seed: int = 0) -> pd.DataFr
     features and give models something learnable.
     """
     rng = np.random.default_rng(seed)
-    idx = pd.date_range("2020-01-01", periods=n, freq=freq, tz="Australia/Brisbane")
+    idx = pd.date_range("2020-01-01", periods=n, freq=freq, tz="UTC")
     t = np.arange(n)
     diurnal = 0.5 * np.sin(2 * np.pi * t / 48)  # 24h cycle
     df = pd.DataFrame(
@@ -48,7 +48,7 @@ def _synthetic_df(n: int = 200, freq: str = "30min", seed: int = 0) -> pd.DataFr
         },
         index=idx,
     )
-    df.index.name = "datetime_aest"
+    df.index.name = "datetime_utc"
     return df
 
 
@@ -140,8 +140,9 @@ def test_add_lag_features_values_match_shift():
 
 
 def test_add_rolling_features_are_shifted_by_one():
-    """Rolling features must not include the current observation — that would
-    leak the label at prediction time."""
+    """Rolling features must summarise strictly-past values (see the
+    ``add_rolling_features`` docstring for why this convention is enforced
+    even though the current 12h horizon doesn't strictly require it)."""
     df = _synthetic_df(30)
     out = add_rolling_features(df, columns=["hsig_m"], windows=[4], stats=("mean",))
     # shift(1) then rolling(4) at row 10 aggregates the shifted series'
@@ -200,7 +201,7 @@ def test_persistence_predict_equals_current_target():
 
 def test_persistence_perfect_on_constant_series():
     """A flat series is exactly forecastable by persistence."""
-    idx = pd.date_range("2020-01-01", periods=100, freq="30min", tz="Australia/Brisbane")
+    idx = pd.date_range("2020-01-01", periods=100, freq="30min", tz="UTC")
     df = pd.DataFrame({"hsig_m": 1.5}, index=idx)
     y = make_target(df, horizon_steps=24)
     preds = PersistenceForecaster().fit(df, y).predict(df)
@@ -227,7 +228,7 @@ def test_seasonal_naive_rejects_period_le_horizon():
 def test_climatology_hour_predicts_training_hourly_mean():
     # Build a series whose hsig_m depends only on hour-of-day.
     n = 48 * 10  # 10 days of 30-min data
-    idx = pd.date_range("2020-01-01", periods=n, freq="30min", tz="Australia/Brisbane")
+    idx = pd.date_range("2020-01-01", periods=n, freq="30min", tz="UTC")
     hsig = idx.hour.to_numpy(dtype=float)  # equals the hour-of-day
     df = pd.DataFrame({"hsig_m": hsig}, index=idx)
     y = make_target(df, horizon_steps=24)  # 12h ahead

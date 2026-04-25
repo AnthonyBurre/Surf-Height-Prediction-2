@@ -46,7 +46,7 @@ def test_clean_sets_datetime_index():
     df = _raw_frame(_standard_rows())
     result = clean(df)
     assert isinstance(result.index, pd.DatetimeIndex)
-    assert result.index.name == "datetime_aest"
+    assert result.index.name == "datetime_utc"
 
 
 def test_clean_sorts_index():
@@ -76,8 +76,13 @@ def test_clean_preserves_row_count_when_no_bad_rows():
 
 
 def _ts(s: str) -> pd.Timestamp:
-    """Tz-aware timestamp matching the cleaned DataFrame's index."""
-    return pd.Timestamp(s, tz="Australia/Brisbane")
+    """Tz-aware UTC timestamp matching the cleaned DataFrame's index.
+
+    The argument is interpreted as AEST (matching the raw source) and
+    converted to UTC, since ``clean()`` localises the naive source then
+    converts to UTC for storage.
+    """
+    return pd.Timestamp(s, tz="Australia/Brisbane").tz_convert("UTC")
 
 
 def test_clean_preserves_values():
@@ -110,11 +115,11 @@ def test_clean_coerces_string_numerics():
     assert np.isnan(result.loc[_ts("2017-01-01 00:30:00"), "hsig_m"])
 
 
-def test_clean_index_is_tz_aware_brisbane():
+def test_clean_index_is_tz_aware_utc():
     df = _raw_frame(_standard_rows())
     result = clean(df)
     assert result.index.tz is not None
-    assert str(result.index.tz) == "Australia/Brisbane"
+    assert str(result.index.tz) == "UTC"
 
 
 def test_clean_reindexes_gaps_as_nan_rows():
@@ -203,7 +208,7 @@ def test_run_writes_csv_and_creates_parent_dir(tmp_path):
     assert output.exists()
     assert len(result) == 2
 
-    reloaded = pd.read_csv(output, parse_dates=["datetime_aest"], index_col="datetime_aest")
+    reloaded = pd.read_csv(output, parse_dates=["datetime_utc"], index_col="datetime_utc")
     assert set(reloaded.columns) == set(result.columns)
     assert len(reloaded) == len(result)
 

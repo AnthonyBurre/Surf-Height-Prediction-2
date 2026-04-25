@@ -9,20 +9,14 @@ from .config import HORIZON_STEPS, TARGET_COL
 # scripts both find the file without path juggling.
 _DEFAULT_CSV = Path(__file__).parents[2] / "data" / "mooloolaba_wave_data_2015-2025.csv"
 
-_BUOY_TZ = "Australia/Brisbane"
-
 
 def load_data(path: str | Path = _DEFAULT_CSV) -> pd.DataFrame:
-    """Load the unified wave buoy CSV with a tz-aware DatetimeIndex.
+    """Load the unified wave buoy CSV with a tz-aware UTC DatetimeIndex.
 
-    The pipeline writes a tz-naive CSV (``df.to_csv`` drops timezone info),
-    so we relocalise on load. If the caller already passed a tz-aware frame,
-    leave it alone.
+    The pipeline writes UTC offsets, which ``read_csv(parse_dates=...)``
+    parses straight back to a tz-aware UTC index — no relocalise needed.
     """
-    df = pd.read_csv(path, parse_dates=["datetime_aest"], index_col="datetime_aest")
-    if df.index.tz is None:
-        df.index = df.index.tz_localize(_BUOY_TZ)
-    return df
+    return pd.read_csv(path, parse_dates=["datetime_utc"], index_col="datetime_utc")
 
 
 def make_target(

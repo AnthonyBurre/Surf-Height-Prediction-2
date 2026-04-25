@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 import requests
 
-from wave_data.downloader import _normalize_columns, fetch_all, fetch_year_datastore
+from wave_data.downloader import _normalize_columns, _session, fetch_all, fetch_year_datastore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,33 +89,33 @@ def test_normalize_does_not_rename_dir_tp_true_for_2017_plus():
 
 
 def test_fetch_year_datastore_returns_dataframe():
-    with patch("wave_data.downloader._SESSION.get", return_value=_datastore_response(_RECORDS_MID_ERA)):
+    with patch.object(_session(), "get", return_value=_datastore_response(_RECORDS_MID_ERA)):
         df = fetch_year_datastore(2017, "fake-rid")
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 2
 
 
 def test_fetch_year_datastore_drops_id_column():
-    with patch("wave_data.downloader._SESSION.get", return_value=_datastore_response(_RECORDS_MID_ERA)):
+    with patch.object(_session(), "get", return_value=_datastore_response(_RECORDS_MID_ERA)):
         df = fetch_year_datastore(2017, "fake-rid")
     assert "_id" not in df.columns
 
 
 def test_fetch_year_datastore_parses_datetime():
-    with patch("wave_data.downloader._SESSION.get", return_value=_datastore_response(_RECORDS_MID_ERA)):
+    with patch.object(_session(), "get", return_value=_datastore_response(_RECORDS_MID_ERA)):
         df = fetch_year_datastore(2017, "fake-rid")
     assert pd.api.types.is_datetime64_any_dtype(df["Date/Time"])
 
 
 def test_fetch_year_datastore_applies_pre_2017_normalisation():
-    with patch("wave_data.downloader._SESSION.get", return_value=_datastore_response(_RECORDS_PRE_2017)):
+    with patch.object(_session(), "get", return_value=_datastore_response(_RECORDS_PRE_2017)):
         df = fetch_year_datastore(2015, "fake-rid")
     assert "Peak Direction" in df.columns
     assert "Dir_Tp TRUE" not in df.columns
 
 
 def test_fetch_year_datastore_strips_unit_suffixes():
-    with patch("wave_data.downloader._SESSION.get", return_value=_datastore_response(_RECORDS_WITH_UNITS)):
+    with patch.object(_session(), "get", return_value=_datastore_response(_RECORDS_WITH_UNITS)):
         df = fetch_year_datastore(2022, "fake-rid")
     assert "Hs" in df.columns
     assert "Hs (m)" not in df.columns
@@ -130,7 +130,7 @@ def test_fetch_year_datastore_paginates_when_total_exceeds_batch():
                "Tz": 5.60, "Tp": 9.20, "Peak Direction": 100.0, "SST": 25.2}]
     total = len(page1) + len(page2)
 
-    with patch("wave_data.downloader._SESSION.get", side_effect=[
+    with patch.object(_session(), "get", side_effect=[
         _datastore_response(page1, total=total),
         _datastore_response(page2, total=total),
     ]):
@@ -142,7 +142,7 @@ def test_fetch_year_datastore_paginates_when_total_exceeds_batch():
 def test_fetch_year_datastore_raises_on_http_error():
     mock = MagicMock()
     mock.raise_for_status.side_effect = requests.exceptions.HTTPError(response=MagicMock(status_code=500))
-    with patch("wave_data.downloader._SESSION.get", return_value=mock):
+    with patch.object(_session(), "get", return_value=mock):
         with pytest.raises(requests.exceptions.HTTPError):
             fetch_year_datastore(2017, "fake-rid")
 

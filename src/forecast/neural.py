@@ -51,6 +51,7 @@ class _TorchSeqForecaster:
         target_col: str = TARGET_COL,
         device: str | None = None,
         seed: int = 42,
+        verbose: bool = False,
     ) -> None:
         self.seq_len = seq_len
         self.hidden = hidden
@@ -62,6 +63,7 @@ class _TorchSeqForecaster:
         self.target_col = target_col
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.seed = seed
+        self.verbose = verbose
         self._model: nn.Module | None = None
         self._x_mean: np.ndarray | None = None
         self._x_std: np.ndarray | None = None
@@ -99,7 +101,9 @@ class _TorchSeqForecaster:
         loss_fn = nn.MSELoss()
 
         model.train()
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
+            epoch_loss = 0.0
+            epoch_batches = 0
             for bx, by in loader:
                 bx = bx.to(self.device)
                 by = by.to(self.device)
@@ -114,6 +118,11 @@ class _TorchSeqForecaster:
                 loss = loss_fn(pred, by)
                 loss.backward()
                 opt.step()
+                epoch_loss += loss.item()
+                epoch_batches += 1
+            if self.verbose and epoch_batches:
+                rmse = (epoch_loss / epoch_batches) ** 0.5 * self._y_std
+                print(f"  epoch {epoch + 1:3d}/{self.epochs}  train RMSE ≈ {rmse:.4f}")
 
         self._model = model
         if self.seq_len > 1:

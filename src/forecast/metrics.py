@@ -29,7 +29,7 @@ def bias(y_true, y_pred) -> float:
 
 
 def skill_score(y_true, y_pred, y_pred_baseline) -> float:
-    """1 − MSE(model) / MSE(baseline). Positive ⇒ beats baseline, 1.0 = perfect.
+    """1 - MSE(model) / MSE(baseline). Positive ⇒ beats baseline, 1.0 = perfect.
 
     Using MSE (not MAE) because skill scores are conventionally defined on
     squared error, and it's what matches the RMSE that regression models
