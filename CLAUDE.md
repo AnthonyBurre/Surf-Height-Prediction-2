@@ -11,6 +11,8 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 ## Non-obvious points
 
+- **Index is UTC everywhere downstream of `pipeline.clean`**, even though the raw CKAN records are naive AEST. `clean()` localises to `Australia/Brisbane` (a fixed UTC+10 since Queensland doesn't observe DST) and immediately `tz_convert("UTC")` so the CSV, modelling pipeline, and viz all share one tz. `datetime_utc` is therefore the index name throughout — no Brisbane-time conversion happens for analysis or plots. `add_time_features` and `ClimatologyHourForecaster` read `index.hour` in UTC; the sin/cos cyclical encoding is phase-invariant so a 10-hour rotation has no effect on model skill.
+
 - **Column normalisation runs per-year, before concat** (`downloader._normalize_columns`). Two schema breaks drive this: pre-2017 uses `Dir_Tp TRUE` instead of `Peak Direction`; 2022+ carries ` (unit)` suffixes on every column.
 
 - **`fetch_all` skips 404s silently, re-raises every other `HTTPError`.** A missing year doesn't kill the run, but a 500 will.

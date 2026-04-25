@@ -134,7 +134,7 @@ Surf-Height-Prediction-2/
 
 ## Dataset schema
 
-The unified CSV has a `datetime_aest` index at 30-minute intervals:
+The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC for storage):
 
 | Column | Description |
 |--------|-------------|

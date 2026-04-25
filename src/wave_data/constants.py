@@ -21,7 +21,7 @@ SENTINEL_VALUE = -99.9
 
 # Final standardised column names applied after per-year normalisation
 COLUMN_RENAME_MAP: dict[str, str] = {
-    "Date/Time": "datetime_aest",
+    "Date/Time": "datetime_utc",
     "Hs": "hsig_m",
     "Hmax": "hmax_m",
     "Tz": "tz_s",
