@@ -61,11 +61,17 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def run(output_path: str | Path = _DEFAULT_OUTPUT) -> pd.DataFrame:
+def run(
+    output_path: str | Path = _DEFAULT_OUTPUT,
+    resource_ids: dict[int, str] | None = None,
+) -> pd.DataFrame:
     """Full pipeline: download → clean → save CSV.
 
     Args:
         output_path: destination for the unified CSV.
+        resource_ids: year → CKAN resource ID mapping; defaults to Mooloolaba
+            (``constants.RESOURCE_IDS``). Pass an entry from ``BUOYS`` to
+            fetch a different buoy.
 
     Returns:
         The cleaned DataFrame (tz-aware DatetimeIndex, standardised columns).
@@ -73,7 +79,7 @@ def run(output_path: str | Path = _DEFAULT_OUTPUT) -> pd.DataFrame:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    df = clean(unify())
+    df = clean(unify(resource_ids))
     df.to_csv(output_path)
     logger.info("Saved %d rows to %s", len(df), output_path)
     return df

@@ -19,6 +19,8 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 - **Data comes from the CKAN Datastore API, not CSV downloads.** `RESOURCE_IDS` are stable across portal file renames, which is why this replaced the older `DATA_URLS` dict preserved in the legacy notebook.
 
+- **Multi-buoy fetches go through `BUOYS` in `wave_data/constants.py`** — a `dict[slug, dict[year, resource_id]]`. `RESOURCE_IDS` is an alias of `BUOYS["mooloolaba"]` (the primary forecasting target). Neighbouring buoys (Caloundra, Brisbane, Gold Coast) carry **2024-2025 only** — enough for cross-source correlation analysis without a half-hour cold download. Fetch a neighbour with `pipeline.run(output_path=..., resource_ids=BUOYS[slug])`; the `python -m wave_data` CLI still hardcodes Mooloolaba.
+
 - **Chronological 80/20 split, not random** — deliberate, to avoid leakage in the time series. `forecast.chronological_split` is the reusable helper.
 
 - **`src/forecast/` is the modelling package**, separate from `src/wave_data/` (ETL). Flat import surface: `from forecast import load_data, make_target, chronological_split, PersistenceForecaster, evaluate, compare, ...`. Experiments live in `notebooks/forecast_comparison.ipynb`.
