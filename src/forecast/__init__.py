@@ -33,6 +33,7 @@ from .config import (
 )
 from .data import chronological_split, load_data, make_target
 from .evaluate import EvaluationResult, compare, evaluate
+from .experiments import evaluate_and_log, log_run, read_log
 from .features import (
     add_lag_features,
     add_rolling_features,
@@ -91,4 +92,8 @@ __all__ = [
     "EvaluationResult",
     "compare",
     "evaluate",
+    # experiments
+    "evaluate_and_log",
+    "log_run",
+    "read_log",
 ]
