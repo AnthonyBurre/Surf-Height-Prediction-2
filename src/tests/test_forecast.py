@@ -140,8 +140,9 @@ def test_add_lag_features_values_match_shift():
 
 
 def test_add_rolling_features_are_shifted_by_one():
-    """Rolling features must not include the current observation — that would
-    leak the label at prediction time."""
+    """Rolling features must summarise strictly-past values (see the
+    ``add_rolling_features`` docstring for why this convention is enforced
+    even though the current 12h horizon doesn't strictly require it)."""
     df = _synthetic_df(30)
     out = add_rolling_features(df, columns=["hsig_m"], windows=[4], stats=("mean",))
     # shift(1) then rolling(4) at row 10 aggregates the shifted series'

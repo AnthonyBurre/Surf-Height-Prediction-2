@@ -39,10 +39,21 @@ def add_rolling_features(
 ) -> pd.DataFrame:
     """Append rolling-window aggregates, right-aligned and lagged by 1 step.
 
-    The shift-by-one is critical: a naive rolling mean includes the current
-    observation, which at prediction time is part of the input. Shifting
-    ensures the window summarises the past only and matches how the feature
-    behaves at inference.
+    The shift-by-one is a convention, not strictly a leakage fix at the
+    current 12h horizon: ``hsig_m[t]`` is a legitimate feature at forecast
+    time ``t``, so an unshifted rolling window over ``[t-w+1, t]`` doesn't
+    expose the future label ``hsig_m[t+12h]``. We shift anyway for three
+    reasons:
+
+    1. **Robustness to horizon changes.** If ``HORIZON_STEPS`` is ever set
+       to 0 (nowcasting), an unshifted window that includes ``t`` would
+       leak the label directly. Shifting keeps the module safe by default.
+    2. **Symmetry with ``add_lag_features``**, which only ever looks at
+       strictly-past values. Treating rolling stats as "summary of the
+       lags" makes the whole feature family interpretable as past-only.
+    3. **Less collinearity with the raw column.** An unshifted ``roll4_mean``
+       is ``0.25·hsig_m[t] + 0.75·(past)`` — nearly redundant with the raw
+       feature already in the frame. The shifted version is independent.
     """
     out = df.copy()
     valid_stats = {"mean", "std", "min", "max", "median"}
