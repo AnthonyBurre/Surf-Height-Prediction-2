@@ -15,7 +15,6 @@ and scripts share one file regardless of cwd. The file is meant to be
 committed to git — it's small, append-only, and ``git_sha`` makes any row
 reproducible by checkout.
 """
-from __future__ import annotations
 
 import json
 import subprocess
