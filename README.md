@@ -1,47 +1,48 @@
 # Surf-Height-Prediction-2
 
-Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, from the Queensland Government open-data buoy feed (2015–2025).
+Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys (Brisbane, Caloundra, Gold Coast, North Moreton Bay) are used as additional input features where their histories overlap.
 
 Three installed Python packages back it:
 
-- **`wave_data`** — ETL. Downloads every year from the CKAN Datastore API, unifies schema, and writes a cleaned CSV on a 30-minute grid.
-- **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
+- **`wave_data`** — ETL. Downloads per-buoy yearly records from the CKAN Datastore API, unifies schema, and writes a cleaned CSV on a 30-minute grid.
 - **`viz`** — source-agnostic plotting. Time series (incl. multi-source overlays), correlation heatmaps (feature × horizon, lookback × horizon, cross-source), and model-comparison / residual-analysis diagnostics.
+- **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
 
-Scripts in `notebooks/` drive experimentation on top of these packages.
+
+Experiment scripts in `notebooks/` run on top of these packages.
 
 ## Problem
 
-Given buoy observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h* — 24 steps ahead. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model actually added information over "it'll be the same as now").
+Given buoy observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h* — 24 steps ahead. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now").
 
 At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff baseline.
 
 ## Setup
 
-Requires Python 3.14. Create a venv, install pinned deps, install the packages in editable mode:
+Requires Python 3.14. Create a venv and install all pinned dependencies (including the editable local packages):
 
 ```bash
 python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e .
 ```
 
 The `data/` directory is gitignored — populate it by running the pipeline.
 
 ## Running the pipeline
 
-Download every year, clean, and export a unified CSV to `data/mooloolaba_wave_data_2015-2025.csv` (~190k rows, a few minutes over the CKAN Datastore API):
+Download, clean, and export a unified CSV (a few minutes over the CKAN Datastore API):
 
 ```bash
-python -m wave_data
+# Default: Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
+./.venv/bin/python -m wave_data
+
+# Any supported buoy
+./.venv/bin/python -m wave_data --buoy brisbane
+./.venv/bin/python -m wave_data --buoy caloundra
 ```
 
-Or to a custom location:
-
-```bash
-python -m wave_data --output path/to/out.csv
-```
+Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-moreton-bay`.
 
 ## Modelling
 
@@ -51,59 +52,79 @@ All modelling code lives in `src/forecast/` and exposes a flat import surface:
 import forecast as fc
 
 df = fc.load_data()                              # tz-aware, 30-min grid
-y = fc.make_target(df)                           # y.loc[t] == hsig_m[t + 12h]
-X = fc.encode_circular(df)                       # sin/cos wave direction
+y  = fc.make_target(df)                          # y.loc[t] == hsig_m[t + 12h]
+X  = fc.build_mooloolaba_features(df)            # lag + rolling + momentum + time features
 X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
 
-result = fc.evaluate(
-    fc.LSTMForecaster(seq_len=48, hidden=32, epochs=5),
-    X_tr, y_tr, X_te, y_te, name="lstm",
+result = fc.evaluate_and_log(
+    fc.Ridge(alpha=1.0),
+    X_tr, y_tr, X_te, y_te,
+    name="ridge", data_sources=["mooloolaba"],
 )
-print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ...}
+print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ..., "SkillVsBaseline": ...}
 ```
 
-Available forecasters:
+### Feature engineering
 
-| family          | classes                                                            |
-|-----------------|--------------------------------------------------------------------|
+`fc.build_mooloolaba_features(df)` produces the full primary-buoy feature matrix (circular encoding, time features, lags, rolling stats, momentum). Neighbour buoys are appended with `fc.add_neighbour_features(X, source_df, columns)`. Both accept a `FeatureConfig` to tune lag steps, rolling windows, and delta steps:
+
+```python
+cfg = fc.FeatureConfig(lag_steps=[1, 2, 6, 24], roll_windows=[12, 48])
+X = fc.build_mooloolaba_features(df, config=cfg)
+```
+
+For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circular encoding and time features only, no pre-built lags (the model windows its own input).
+
+### Available forecasters
+
+| family          | classes                                                                         |
+|-----------------|---------------------------------------------------------------------------------|
 | baselines       | `PersistenceForecaster`, `SeasonalNaiveForecaster`, `ClimatologyHourForecaster` |
-| linear / tree   | any scikit-learn regressor (OLS, Ridge, RF, GB, …)                 |
-| sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster` |
-
-`fc.evaluate(...)` fits on NaN-masked training rows, predicts on `X_test` (NaN-safe for sklearn models too), and returns metrics + predictions aligned to the test index. `fc.compare([r1, r2, ...])` stacks several results into a sorted DataFrame.
+| linear / tree   | any scikit-learn regressor (Ridge, Lasso, HGB, …)                               |
+| sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`       |
 
 ## Logging experiments
 
-Runs can be appended to a JSONL log at `experiments.jsonl` (repo root, committed) so results are durable across sessions and reproducible by git SHA. `fc.evaluate_and_log(...)` is a drop-in replacement for `fc.evaluate(...)`:
-
-```python
-result = fc.evaluate_and_log(
-    Ridge(alpha=1.0),
-    X_tr, y_tr, X_te, y_te,
-    name="ridge",
-    baseline_preds=persistence_preds,
-    data_sources=["mooloolaba"],
-)
-```
-
-For results computed outside the harness (custom fitting loops, ensembles, residual targets), build the `EvaluationResult` yourself and call `fc.log_run(result, ...)`. Each record captures `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`; the `git_sha` carries a `-dirty` suffix when the working tree has uncommitted changes, so any row can be reproduced by checkout.
-
-Read it back as a DataFrame with `fc.read_log()`.
+`fc.evaluate_and_log(...)` is a drop-in for `fc.evaluate(...)` that appends a record to `experiments.jsonl` (repo root, committed). For results computed outside the harness (ensembles, custom loops), use `fc.log_run(result, ...)`. Each record captures `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`; the `git_sha` carries a `-dirty` suffix when the working tree has uncommitted changes. Read the log back as a DataFrame with `fc.read_log()`.
 
 ## Experiment scripts
 
-All scripts are plain `.py` files under `notebooks/` — run directly with `./.venv/bin/python notebooks/<script>.py`.
+All scripts are plain `.py` files — run directly:
 
-- **`forecast_v2.py`** — full 2015-2025 history; compares persistence, Ridge, HGB (direct + residual target), and a Ridge/HGB ensemble. Best result: Ridge RMSE 0.265, skill +11.3% vs persistence.
-- **`mooloolaba_brisbane_forecast.py`** — Ridge + Lasso on the 2015-2025 Mooloolaba + Brisbane overlap window.
-- **`mooloolaba_brisbane_lstm.py`** — LSTM on the same overlap window; documents convergence findings across several architecture configs (~25 min CPU per run).
-- **`multi_buoy_forecast.py`** — scopes to the 2024-2025 overlap window (all four buoys), compares Mooloolaba-only vs. multi-buoy Ridge/HGB. Key finding: neighbour buoys add ~+6 pp skill (ridge_multi_2024 RMSE 0.244, skill +19.5% vs persistence). **`sst_c` is 100% NaN in the test half of 2025** — any Ridge trained on this window must pre-impute (e.g. `SimpleImputer(strategy="mean")`) before passing to the evaluate harness.
-- **`buoy_eda.py`** — multi-buoy EDA: coverage, distributions, seasonality, direction, and cross-source correlation.
+```bash
+./.venv/bin/python notebooks/<script>.py
+```
+
+| script | description |
+|--------|-------------|
+| `forecast_v2.py` | Full 2015-2025 history. Compares persistence, Ridge, HGB (direct + residual target), and a Ridge/HGB ensemble. Best: Ridge RMSE 0.265, skill +11.3%. |
+| `mooloolaba_brisbane_forecast.py` | Ridge + Lasso on the 2015-2025 Mooloolaba + Brisbane overlap window. |
+| `mooloolaba_brisbane_lstm.py` | LSTM on the same window. Convergence findings across several architecture configs documented in the script header (~25 min CPU per run). |
+| `multi_buoy_forecast.py` | 2024-2025 window, all four neighbour buoys. Ridge + HGB. Key finding: neighbour buoys add ~+6 pp skill (RMSE 0.244, +19.5% vs persistence). |
+| `buoy_eda.py` | Multi-buoy EDA: coverage, distributions, seasonality, direction, cross-source correlation. |
+
+## Results
+
+All runs use a chronological 80/20 split. Skill score is vs. persistence on the same test window. The 2024-2025 window is a separate split scoped to the neighbour-buoy overlap period; its persistence baseline (RMSE 0.272) differs from the full-history one (RMSE 0.289).
+
+| Model | Data sources | Window | RMSE | Skill |
+|-------|-------------|--------|------|-------|
+| Persistence (baseline) | Mooloolaba | 2015-2025 | 0.289 | — |
+| Ridge | Mooloolaba | 2015-2025 | 0.265 | +11.3% |
+| HGB (persistence-residual target) | Mooloolaba | 2015-2025 | 0.282 | +5.2% |
+| Ridge + HGB ensemble | Mooloolaba | 2015-2025 | 0.277 | +8.2% |
+| Lasso | Mooloolaba + Brisbane | 2015-2025 | 0.267 | +15.5% |
+| LSTM (50 epochs, seq_len=48) | Mooloolaba + Brisbane | 2015-2025 | 0.301 | +3.7% |
+| Persistence (baseline) | Mooloolaba | 2024-2025 | 0.272 | — |
+| Ridge | Mooloolaba + 3 neighbours | 2024-2025 | 0.244 | +19.5% |
+| HGB | Mooloolaba + 3 neighbours | 2024-2025 | 0.258 | +10.0% |
+
+The full set of logged runs is in `experiments.jsonl`.
 
 ## Running tests
 
 ```bash
-pytest src/tests/ -v
+./.venv/bin/pytest src/tests/ -v
 ```
 
 Network calls are mocked, so tests run offline.
@@ -113,50 +134,37 @@ Network calls are mocked, so tests run offline.
 ```
 Surf-Height-Prediction-2/
 ├── src/
-│   ├── wave_data/              # ETL package — installed as `wave_data`
-│   │   ├── __main__.py         # `python -m wave_data` CLI entry point
-│   │   ├── constants.py        # CKAN resource IDs, rename maps, sentinel value
+│   ├── wave_data/              # ETL package
+│   │   ├── __main__.py         # `python -m wave_data [--buoy NAME]` entry point
+│   │   ├── constants.py        # CKAN resource IDs per buoy per year
 │   │   ├── downloader.py       # per-year CKAN Datastore fetch + schema normalisation
-│   │   └── pipeline.py         # unify / clean / run — exports the cleaned CSV
-│   ├── forecast/               # modelling package — installed as `forecast`
+│   │   └── pipeline.py         # unify / clean / export CSV
+│   ├── forecast/               # modelling package
 │   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
 │   │   ├── data.py             # load_data, make_target, chronological_split
-│   │   ├── features.py         # lag, rolling, cyclical time, circular direction encoding
+│   │   ├── features.py         # FeatureConfig, build_mooloolaba_features, add_neighbour_features, build_seq_features
 │   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
 │   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
 │   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
-│   │   ├── evaluate.py         # fit / predict / score harness + `compare` helper
-│   │   └── experiments.py      # append-only JSONL run log + `read_log` reader
-│   ├── viz/                    # plotting package — installed as `viz`
+│   │   ├── evaluate.py         # fit / predict / score harness + compare helper
+│   │   └── experiments.py      # append-only JSONL run log + read_log reader
+│   ├── viz/                    # plotting package
 │   │   ├── timeseries.py       # plot_series, plot_multi_source, autocorrelation_curve
 │   │   ├── correlation.py      # feature × horizon, lookback × horizon, cross-source heatmaps
 │   │   └── diagnostics.py      # rmse_bar, residual_timeseries, residual_by_bin
 │   └── tests/                  # pytest suite (network-mocked)
-│       ├── test_downloader.py
-│       ├── test_pipeline.py
-│       └── test_forecast.py
-├── notebooks/
-│   ├── forecast_v2.py              # full-history model comparison
-│   ├── mooloolaba_brisbane_forecast.py  # linear models, Mool + Brisbane
-│   ├── mooloolaba_brisbane_lstm.py      # LSTM, Mool + Brisbane
-│   ├── multi_buoy_forecast.py      # 2024-2025 multi-buoy comparison
-│   └── buoy_eda.py                 # multi-buoy EDA
+├── notebooks/                  # experiment scripts
 ├── data/                       # gitignored — generated by `python -m wave_data`
-├── experiments.jsonl           # append-only run log (committed; one JSON record per run)
-├── CLAUDE.md                   # non-obvious behaviour, invariants, gotchas
-├── pyproject.toml              # package metadata; editable install target
-└── requirements.txt            # full pinned env (regen with `pip freeze`)
+├── experiments.jsonl           # append-only run log (committed)
+├── pyproject.toml
+└── requirements.txt            # pinned env (regen: pip freeze > requirements.txt)
 ```
 
-**Package layout rationale.** `wave_data` (ETL), `forecast` (modelling), and `viz` (plotting) are deliberately separated so that downstream code can import a trained forecaster without pulling in HTTP / CKAN dependencies, plotting can be applied to any data source (buoy, atmospheric reanalysis, another buoy) without coupling to the modelling code, and the data pipeline can be swapped (e.g. for a different buoy) without touching the models. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
-
-**Multi-source expectations.** `viz` accepts a `dict[str, pd.Series | pd.DataFrame]` keyed by source label (buoy name, reanalysis product, …) wherever multi-source comparisons make sense — time-series overlays, cross-source correlation matrices. Future additions (e.g. a sister buoy, BOM wind fields) plug in by contributing a loader that produces a DataFrame with the shared time axis and calling the same `viz` functions.
-
-**Non-obvious architecture points** (invariants and gotchas) are documented in [`CLAUDE.md`](CLAUDE.md).
+**Package layout rationale.** `wave_data`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
 
 ## Dataset schema
 
-The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC for storage):
+The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC):
 
 | Column | Description |
 |--------|-------------|
@@ -167,11 +175,11 @@ The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records a
 | `peak_dir_deg` | Peak wave direction (degrees) |
 | `sst_c` | Sea surface temperature (°C) |
 
-Missing or erroneous readings are encoded as `-99.9` in the raw source files; `pipeline.clean` replaces them with `NaN` and reindexes onto a gap-free 30-minute grid.
+Missing or erroneous readings (`-99.9` in raw files) are replaced with `NaN` and the index is resampled onto a gap-free 30-minute grid.
 
 ## Data source
 
-Queensland Government open data portal, Mooloolaba wave buoy. Fetched via the CKAN Datastore API (`datastore_search`) rather than by downloading raw CSVs, so resource IDs remain stable across portal file renames.
+Queensland Government open data portal, wave buoy network. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. Supported buoys and their available history: Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
 
 ## License
 
