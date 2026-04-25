@@ -8,11 +8,19 @@ version = "0.1.0"
 description = "Download and unify Mooloolaba wave buoy data from the Queensland Government CKAN portal."
 requires-python = ">=3.14"
 dependencies = [
+    "numpy>=2.0",
     "pandas>=2.3",
     "requests>=2.32",
 ]
 
 [project.optional-dependencies]
+viz = [
+    "matplotlib",
+    "seaborn",
+]
+forecast = [
+    "torch",
+]
 notebooks = [
     "ipykernel",
     "matplotlib",
@@ -22,6 +30,7 @@ notebooks = [
 ]
 dev = [
     "pytest",
+    "scikit-learn",
 ]
 
 [tool.setuptools.packages.find]

@@ -3,6 +3,12 @@
 Top-level exports cover the common workflow: load data, build target,
 split, engineer features, fit baselines or regressors, score.
 
+Sequence-model forecasters (``SimpleRNNForecaster``, ``GRUForecaster``,
+``LSTMForecaster``, ``TCNForecaster``) require ``torch`` and are loaded
+lazily — ``import forecast`` stays light, and the first reference to one
+of those names triggers the torch import (with a clear ImportError if
+torch is not installed).
+
 Example
 -------
 >>> from forecast import load_data, make_target, chronological_split
@@ -34,12 +40,20 @@ from .features import (
     encode_circular,
 )
 from .metrics import bias, mae, rmse, skill_score, summarise
-from .neural import (
-    GRUForecaster,
-    LSTMForecaster,
-    SimpleRNNForecaster,
-    TCNForecaster,
-)
+
+_NEURAL_NAMES = frozenset({
+    "GRUForecaster",
+    "LSTMForecaster",
+    "SimpleRNNForecaster",
+    "TCNForecaster",
+})
+
+
+def __getattr__(name: str):
+    if name in _NEURAL_NAMES:
+        from . import neural
+        return getattr(neural, name)
+    raise AttributeError(f"module 'forecast' has no attribute {name!r}")
 
 __all__ = [
     # config

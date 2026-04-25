@@ -26,8 +26,7 @@ def rmse_bar(
     color: str = "#4c72b0",
 ) -> Axes:
     """Horizontal bar chart of a single metric across models, sorted low→high."""
-    rows = [(r.name, r.metrics[metric]) for r in results]
-    s = pd.Series({name: value for name, value in rows}).sort_values()
+    s = pd.Series({r.name: r.metrics[metric] for r in results}).sort_values()
 
     if ax is None:
         _, ax = plt.subplots(figsize=(9, max(3.5, 0.35 * len(s))))

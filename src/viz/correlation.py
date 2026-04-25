@@ -10,7 +10,6 @@ Three use-cases, each with its own function:
    variable correlates across multiple buoys / products at a given lag.
 """
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes

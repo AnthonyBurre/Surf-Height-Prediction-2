@@ -53,16 +53,8 @@ def add_rolling_features(
     for col in columns:
         for w in windows:
             r = df[col].shift(1).rolling(window=w, min_periods=max(1, w // 2))
-            if "mean" in stats:
-                out[f"{col}_roll{w}_mean"] = r.mean()
-            if "std" in stats:
-                out[f"{col}_roll{w}_std"] = r.std()
-            if "min" in stats:
-                out[f"{col}_roll{w}_min"] = r.min()
-            if "max" in stats:
-                out[f"{col}_roll{w}_max"] = r.max()
-            if "median" in stats:
-                out[f"{col}_roll{w}_median"] = r.median()
+            for stat in stats:
+                out[f"{col}_roll{w}_{stat}"] = getattr(r, stat)()
     return out
 
 

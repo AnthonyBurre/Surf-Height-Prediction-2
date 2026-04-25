@@ -1,4 +1,5 @@
 import logging
+from functools import cache
 
 import pandas as pd
 import requests
@@ -14,9 +15,11 @@ logger = logging.getLogger(__name__)
 _DATASTORE_BATCH = 32000
 
 
-def _build_session() -> requests.Session:
-    """Session with retry/backoff for transient 5xx and connection errors.
+@cache
+def _session() -> requests.Session:
+    """Singleton session with retry/backoff for transient 5xx and connection errors.
 
+    Built on first use — no HTTP machinery is constructed at import time.
     404 is not retried: fetch_all treats it as a legitimate "resource missing"
     signal and skips the year.
     """
@@ -30,9 +33,6 @@ def _build_session() -> requests.Session:
     session = requests.Session()
     session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
-
-
-_SESSION = _build_session()
 
 
 def _normalize_columns(df: pd.DataFrame, year: int) -> pd.DataFrame:
@@ -61,7 +61,7 @@ def fetch_year_datastore(year: int, resource_id: str) -> pd.DataFrame:
     offset = 0
 
     while True:
-        response = _SESSION.get(
+        response = _session().get(
             f"{CKAN_API_BASE}/datastore_search",
             params={"resource_id": resource_id, "limit": _DATASTORE_BATCH, "offset": offset},
             timeout=30,
