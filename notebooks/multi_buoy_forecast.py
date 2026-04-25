@@ -44,64 +44,6 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 
-# ---------------------------------------------------------------------------
-# Feature engineering (Mooloolaba features — mirrors forecast_v2)
-# ---------------------------------------------------------------------------
-
-LAG_STEPS    = [1, 2, 3, 6, 12, 24, 48, 96, 144]
-ROLL_WINDOWS = [12, 24, 48, 96]
-DELTA_STEPS  = [6, 12, 24, 48]
-NEIGHBOUR_LAGS = [1, 2, 3, 6, 12, 24]  # 30-min steps; raw col = lag 0
-NEIGHBOUR_ROLL = [6, 12, 24]            # rolling windows for neighbours
-
-
-def add_momentum(df: pd.DataFrame, columns: list[str], deltas: list[int]) -> pd.DataFrame:
-    out = df.copy()
-    for col in columns:
-        for d in deltas:
-            out[f"{col}_delta_{d}"] = df[col] - df[col].shift(d)
-    return out
-
-
-def mool_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Full Mooloolaba feature set (identical to forecast_v2.build_features)."""
-    return (
-        df.pipe(fc.encode_circular)
-          .pipe(fc.add_time_features)
-          .pipe(fc.add_lag_features,
-                columns=["hsig_m", "hmax_m", "tp_s", "tz_s"], lags=LAG_STEPS)
-          .pipe(fc.add_rolling_features,
-                columns=["hsig_m", "tp_s", "hmax_m"],
-                windows=ROLL_WINDOWS, stats=("mean", "std", "min", "max"))
-          .pipe(add_momentum,
-                columns=["hsig_m", "tp_s", "hmax_m"], deltas=DELTA_STEPS)
-    )
-
-
-def neighbour_features(
-    X_mool: pd.DataFrame, merged: pd.DataFrame, neighbour_cols: list[str]
-) -> pd.DataFrame:
-    """Append raw + lag + rolling features for each neighbour hsig_m column.
-
-    Reads neighbour raw values from merged (which has them) and appends onto
-    X_mool (which does not). This keeps the Mooloolaba-only and multi-buoy
-    feature matrices cleanly separated.
-    """
-    out = X_mool.copy()
-    for col in neighbour_cols:
-        out[col] = merged[col]                          # raw value at t (lag 0)
-        for lag in NEIGHBOUR_LAGS:
-            out[f"{col}_lag{lag}"] = merged[col].shift(lag)
-        for w in NEIGHBOUR_ROLL:
-            r = merged[col].shift(1).rolling(window=w, min_periods=max(1, w // 2))
-            out[f"{col}_roll{w}_mean"] = r.mean()
-            out[f"{col}_roll{w}_std"]  = r.std()
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
 
 def load_buoy(filename: str) -> pd.DataFrame:
     return pd.read_csv(
@@ -124,14 +66,12 @@ def build_merged() -> tuple[pd.DataFrame, list[str]]:
         "goldcoast": load_buoy("gold-coast_wave_data_2024-2025.csv"),
     }
 
-    # Restrict Mooloolaba to the overlap window shared by all neighbours.
     start = max(df.index.min() for df in neighbours.values())
     end   = min(df.index.max() for df in neighbours.values())
     mool  = mool.loc[start:end]
     print(f"Overlap window : {start}  →  {end}")
     print(f"Mooloolaba rows: {len(mool):,}")
 
-    # Build merged frame: Mooloolaba base + neighbour hsig_m columns.
     merged = mool.copy()
     neighbour_cols: list[str] = []
     for name, nb in neighbours.items():
@@ -145,9 +85,18 @@ def build_merged() -> tuple[pd.DataFrame, list[str]]:
     return merged, neighbour_cols
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def mean_impute(
+    X_tr: pd.DataFrame, X_te: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    imp = SimpleImputer(strategy="mean")
+    X_tr_imp = pd.DataFrame(
+        imp.fit_transform(X_tr), columns=X_tr.columns, index=X_tr.index
+    )
+    X_te_imp = pd.DataFrame(
+        imp.transform(X_te), columns=X_te.columns, index=X_te.index
+    )
+    return X_tr_imp, X_te_imp
+
 
 def make_result(name, preds, y_te, baseline_preds, model=None):
     metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=baseline_preds)
@@ -161,20 +110,6 @@ def fit_hgb_direct(kw, X_tr, y_tr, X_te):
     return m.predict(X_te.to_numpy()), m
 
 
-def mean_impute(
-    X_tr: pd.DataFrame, X_te: pd.DataFrame
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit a mean imputer on X_tr, transform both. Returns new DataFrames."""
-    imp = SimpleImputer(strategy="mean")
-    X_tr_imp = pd.DataFrame(
-        imp.fit_transform(X_tr), columns=X_tr.columns, index=X_tr.index
-    )
-    X_te_imp = pd.DataFrame(
-        imp.transform(X_te), columns=X_te.columns, index=X_te.index
-    )
-    return X_tr_imp, X_te_imp
-
-
 def timed(label, fn, *args, **kwargs):
     t0 = time.time()
     out = fn(*args, **kwargs)
@@ -182,29 +117,19 @@ def timed(label, fn, *args, **kwargs):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main() -> pd.DataFrame:
     merged, neighbour_cols = build_merged()
 
     y = fc.make_target(merged)
 
-    # --- Feature matrices ---------------------------------------------------
-    # Slice to Mooloolaba-only columns before building X_mool so that neighbour
-    # raw columns are not silently included in the "mool-only" baseline.
     mool_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-    X_mool  = mool_features(mool_only)
-    X_multi = neighbour_features(X_mool, merged, neighbour_cols)
+    X_mool  = fc.build_mooloolaba_features(mool_only)
+    X_multi = fc.add_neighbour_features(X_mool, merged, neighbour_cols)
+    X_p     = merged[["hsig_m"]]
 
-    # Persistence only needs hsig_m; split it for the baseline.
-    X_p = merged[["hsig_m"]]
-
-    # All splits use the same 80/20 chronological boundary.
-    X_mool_tr,  X_mool_te,  y_tr, y_te = fc.chronological_split(X_mool, y)
+    X_mool_tr,  X_mool_te,  y_tr, y_te = fc.chronological_split(X_mool,  y)
     X_multi_tr, X_multi_te, _,    _    = fc.chronological_split(X_multi, y)
-    X_p_tr,     X_p_te,     _,    _    = fc.chronological_split(X_p, y)
+    X_p_tr,     X_p_te,     _,    _    = fc.chronological_split(X_p,     y)
 
     print(f"\nRows : {len(merged):,}  |  train: {len(X_mool_tr):,}  test: {len(X_mool_te):,}")
     print(f"Mooloolaba features : {X_mool.shape[1]}")
@@ -213,7 +138,6 @@ def main() -> pd.DataFrame:
 
     results: list[fc.EvaluationResult] = []
 
-    # -----------------------------------------------------------------------
     print("=== Baselines ===")
     persist = timed("persistence",
         fc.evaluate_and_log, fc.PersistenceForecaster(),
@@ -224,12 +148,9 @@ def main() -> pd.DataFrame:
     results.append(persist)
     pp = persist.predictions
 
-    # Pre-impute (mean, fit on train) so Ridge's all-or-nothing NaN mask doesn't
-    # kill every test row — sst_c drops out partway through 2025.
     X_mool_tr_imp,  X_mool_te_imp  = mean_impute(X_mool_tr,  X_mool_te)
     X_multi_tr_imp, X_multi_te_imp = mean_impute(X_multi_tr, X_multi_te)
 
-    # -----------------------------------------------------------------------
     print("\n=== Mooloolaba-only Ridge (2024-2025 window) ===")
     ridge_mool = timed("ridge_mool_2024",
         fc.evaluate_and_log, Ridge(alpha=1.0),
@@ -242,7 +163,6 @@ def main() -> pd.DataFrame:
                "imputation": "mean"})
     results.append(ridge_mool)
 
-    # -----------------------------------------------------------------------
     print("\n=== Multi-buoy Ridge ===")
     ridge_multi = timed("ridge_multi_2024",
         fc.evaluate_and_log, Ridge(alpha=1.0),
@@ -255,7 +175,6 @@ def main() -> pd.DataFrame:
                "imputation": "mean"})
     results.append(ridge_multi)
 
-    # -----------------------------------------------------------------------
     print("\n=== Multi-buoy HGB (NaN-native) ===")
     hgb_kw = dict(
         max_iter=800, learning_rate=0.03, max_depth=6,
@@ -274,7 +193,6 @@ def main() -> pd.DataFrame:
                       "neighbour_features": neighbour_cols})
     results.append(hgb_result)
 
-    # -----------------------------------------------------------------------
     print("\n=== Feature importance (HGB, top 20) ===")
     if hasattr(hgb_model, "feature_importances_"):
         feat_imp = pd.Series(
@@ -285,13 +203,10 @@ def main() -> pd.DataFrame:
     else:
         print("  (feature_importances_ not available for this sklearn version)")
 
-    # -----------------------------------------------------------------------
     print("\n=== Results (sorted by RMSE) ===")
     table = fc.compare(results).round(4)
     print(table.to_string())
 
-    # Context: best full-history result from experiments.jsonl.
-    # The 'metrics' column is a dict; access it directly.
     log = fc.read_log()
     full_hist_row = log[log["name"] == "ridge"].sort_values("timestamp").iloc[-1]
     m = full_hist_row["metrics"]

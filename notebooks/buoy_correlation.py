@@ -14,7 +14,6 @@ is genuinely upstream of the dominant swell direction, its observations at
 time t should correlate more strongly with Mooloolaba at t+h than with
 Mooloolaba at t — that's a real predictive signal beyond persistence.
 """
-from __future__ import annotations
 
 from pathlib import Path
 

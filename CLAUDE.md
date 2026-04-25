@@ -6,7 +6,7 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 ## Commands
 
-- `./.venv/bin/python -m wave_data` — package is installed editable (`pip install -e .`), so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named wave_data`, re-run `./.venv/bin/pip install -e .`.
+- `./.venv/bin/python -m wave_data [--buoy NAME]` — downloads and saves a buoy CSV to `data/{buoy}_wave_data_{years}.csv`. Package is installed editable (`pip install -e .`), so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named wave_data`, re-run `./.venv/bin/pip install -e .`.
 - `./.venv/bin/pytest src/tests/ -v` — pytest rootdir discovery + `src/tests/__init__.py` handle path resolution.
 
 ## Non-obvious points
@@ -20,7 +20,5 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 - **Rolling features lag-shift by 1 step** in `features.add_rolling_features` — past-only by convention (see its docstring). Enforced by `test_add_rolling_features_are_shifted_by_one`.
 
 - **Skill score is always measured vs. `PersistenceForecaster`.** Persistence is tough to beat at this horizon (12h autocorrelation ≈ 0.8); seasonal-naive and climatology trail it and exist only as diagnostic floors.
-
-- **`notebooks/multi_buoy_forecast.py`** — scopes to the 2024-2025 overlap window (all four buoys), runs an independent 80/20 split within that window, and compares Mooloolaba-only vs. multi-buoy Ridge/HGB. Key finding: neighbour buoys add ~+6 pp skill over the same-window Mooloolaba baseline (ridge_multi_2024 RMSE 0.244, skill +19.5% vs persistence). **`sst_c` is 100% NaN in the test half of 2025** — any Ridge trained on this window must pre-impute (e.g. `SimpleImputer(strategy="mean")`) before passing to the evaluate harness, otherwise the all-or-nothing NaN mask produces zero valid test rows. Neighbour CSVs (`caloundra_wave_data_2024-2025.csv`, `brisbane_wave_data_2024-2025.csv`, `gold-coast_wave_data_2024-2025.csv`) are already downloaded to `data/`.
 
 - **Experiment results go in `experiments.jsonl` at the repo root** — one JSON record per run with `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`. Use `forecast.evaluate_and_log(...)` (drop-in replacement for `evaluate`) or `forecast.log_run(result, ...)` for results computed outside the harness; `forecast.read_log()` returns the file as a DataFrame in one line. The file is committed; `git_sha` (with a `-dirty` suffix when the working tree is dirty) makes any row reproducible by checkout.

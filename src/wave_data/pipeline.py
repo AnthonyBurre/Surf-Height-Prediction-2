@@ -4,13 +4,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .constants import COLUMN_RENAME_MAP, RESOURCE_IDS, SENTINEL_VALUE
+from .constants import BUOYS, COLUMN_RENAME_MAP, RESOURCE_IDS, SENTINEL_VALUE
 from .downloader import fetch_all
 
 logger = logging.getLogger(__name__)
 
-# Default output path relative to the project root, regardless of cwd
-_DEFAULT_OUTPUT = Path(__file__).parents[2] / "data" / "mooloolaba_wave_data_2015-2025.csv"
+_DATA_DIR = Path(__file__).parents[2] / "data"
+
+# Backwards-compatible default for callers that used the old positional output_path default.
+_DEFAULT_OUTPUT = _DATA_DIR / "mooloolaba_wave_data_2015-2025.csv"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
 # localising to Australia/Brisbane attaches the correct offset before we
@@ -62,20 +64,28 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run(
-    output_path: str | Path = _DEFAULT_OUTPUT,
+    buoy: str = "mooloolaba",
+    output_path: str | Path | None = None,
     resource_ids: dict[int, str] | None = None,
 ) -> pd.DataFrame:
     """Full pipeline: download → clean → save CSV.
 
     Args:
-        output_path: destination for the unified CSV.
-        resource_ids: year → CKAN resource ID mapping; defaults to Mooloolaba
-            (``constants.RESOURCE_IDS``). Pass an entry from ``BUOYS`` to
-            fetch a different buoy.
+        buoy: key into ``constants.BUOYS`` (e.g. ``"brisbane"``); determines
+            both the resource IDs and the default output filename.
+        output_path: destination for the unified CSV; defaults to
+            ``data/{buoy}_wave_data_{first_year}-{last_year}.csv``.
+        resource_ids: explicit year → CKAN resource ID mapping; overrides
+            the ``buoy`` lookup when provided.
 
     Returns:
         The cleaned DataFrame (tz-aware DatetimeIndex, standardised columns).
     """
+    if resource_ids is None:
+        resource_ids = BUOYS[buoy]
+    if output_path is None:
+        years = sorted(resource_ids)
+        output_path = _DATA_DIR / f"{buoy}_wave_data_{years[0]}-{years[-1]}.csv"
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

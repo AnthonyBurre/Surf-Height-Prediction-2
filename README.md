@@ -98,6 +98,7 @@ jupyter notebook notebooks/
 
 - **`visualization.ipynb`** — data-exploration notebook. Runs in ~10 s end-to-end (no sequence-model training), so `Run All` is cheap. Time-series overviews, channel distributions, missing-value inspection, autocorrelation, feature × horizon and lookback × horizon correlation heatmaps, and cheap-model residual diagnostics. All plots go through `viz`.
 - **`forecast_comparison.ipynb`** — the main modelling surface. Loads the unified CSV, engineers lag/rolling features, fits baselines, linear, tree, and sequence models, and presents a full skill-score comparison plus error analysis.
+- **`notebooks/multi_buoy_forecast.py`** — scopes to the 2024-2025 overlap window (all four buoys), runs an independent 80/20 split within that window, and compares Mooloolaba-only vs. multi-buoy Ridge/HGB. Key finding: neighbour buoys add ~+6 pp skill over the same-window Mooloolaba baseline (ridge_multi_2024 RMSE 0.244, skill +19.5% vs persistence). **`sst_c` is 100% NaN in the test half of 2025** — any Ridge trained on this window must pre-impute (e.g. `SimpleImputer(strategy="mean")`) before passing to the evaluate harness, otherwise the all-or-nothing NaN mask produces zero valid test rows.
 - `wave_data_unification.ipynb` — legacy; superseded by `python -m wave_data`.
 
 ## Running tests

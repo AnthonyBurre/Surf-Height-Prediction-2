@@ -4,9 +4,8 @@ CKAN_API_BASE = "https://www.data.qld.gov.au/api/3/action"
 # even when the portal renames or replaces the underlying file.
 #
 # BUOYS is keyed by short slug; each value maps year → CKAN resource ID.
-# Mooloolaba is the primary forecasting target; the southern neighbours
-# (Caloundra, Brisbane, Gold Coast) span 2024-2025 only — enough for
-# cross-source correlation analysis without a half-hour cold download.
+# Mooloolaba is the primary forecasting target. Brisbane and North Moreton Bay
+# have full multi-year histories; Caloundra and Gold Coast go back to ~2013/2015.
 BUOYS: dict[str, dict[int, str]] = {
     "mooloolaba": {
         2015: "81df149b-67fc-4e5c-8ab8-b479001e04eb",
@@ -36,8 +35,34 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "d276f08f-5853-493e-a607-0dfa60f6e850",
     },
     "brisbane": {
+        # 2012: "cf594247-4da2-4802-8a86-ea7b514df3e7",
+        # 2013: "5e648c66-e67f-4b76-9ba3-5a281bec7ccf",
+        # 2014: "b328dc90-4f16-4c63-a577-ad954b5e898c",
+        2015: "53cfe709-5b7f-4339-b8c7-919cdcdb79ae",
+        2016: "19b441dd-2539-497b-b11c-78a85def64c9",
+        2017: "3a833ec3-2685-4999-af4f-f10d304042f6",
+        2018: "de0ddbda-84e5-4583-a85b-bea48bd875d5",
+        2019: "de65743a-daf9-4726-a0ee-fb6c2ea641b4",
+        2020: "0e525f71-8df4-4cf2-8f57-76f66b7b67c8",
+        2021: "16b71762-862f-4cd6-909b-ff83de7ec144",
+        2022: "4f38dc47-11b9-422b-93ba-82913e972b36",
+        2023: "4bff0f4e-9739-45b7-a92e-bc640cbc9bba",
         2024: "7f7da919-6c68-4bf4-bb4b-b6a0d936316c",
         2025: "60abceb3-2949-48df-8181-3f98ae72108d",
+    },
+    "north-moreton-bay": {
+        # 2010 resource is a bundle covering 2010-2015; pre-2017 column schema.
+        2010: "6ab26f13-ee41-4ef1-ba22-846aaeaaee6f",
+        2016: "4c24fddd-af86-41ea-8a03-9c33941f8f10",
+        2017: "32838f8b-496a-4056-9c3f-b6a52932f246",
+        2018: "b1386a01-e4d5-462f-bf84-a77e519f0cc6",
+        2019: "b9fda7ae-c24e-4bb9-b2f4-83487327300d",
+        2020: "cbcd6887-b9f6-40cb-9fc4-8e313fbd4e53",
+        2021: "495628d7-1634-4a6a-9921-58078eaffe2c",
+        2022: "c7dfd4b3-7365-4ecb-ad6e-93b396df9e94",
+        2023: "eb6e9ea6-72be-4148-b924-5b10f65ef201",
+        2024: "48682394-8098-4ab6-8e6a-d2da453a220b",
+        2025: "95654258-beee-4b4e-b506-e49b6657e5dd",
     },
     "gold-coast": {
         2015: "30cdfd68-52e9-4c5c-933c-03c2fed5a11a",

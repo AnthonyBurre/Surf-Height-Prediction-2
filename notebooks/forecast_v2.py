@@ -36,46 +36,8 @@ import forecast as fc
 from forecast.metrics import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-# Ensemble averages over rows where both members are NaN — np.nanmean
-# correctly returns NaN there but spams a RuntimeWarning. Silence it.
 warnings.filterwarnings("ignore", message="Mean of empty slice")
 
-
-# ---------------------------------------------------------------------------
-# Feature engineering
-# ---------------------------------------------------------------------------
-
-LAG_STEPS = [1, 2, 3, 6, 12, 24, 48, 96, 144]  # 30min … 72h
-ROLL_WINDOWS = [12, 24, 48, 96]                 # 6h, 12h, 24h, 48h
-DELTA_STEPS = [6, 12, 24, 48]                   # 3h, 6h, 12h, 24h
-
-
-def add_momentum(df: pd.DataFrame, columns: list[str], deltas: list[int]) -> pd.DataFrame:
-    """col(t) - col(t - d) for every (col, d). Captures trend / direction."""
-    out = df.copy()
-    for col in columns:
-        for d in deltas:
-            out[f"{col}_delta_{d}"] = df[col] - df[col].shift(d)
-    return out
-
-
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    return (
-        df.pipe(fc.encode_circular)
-          .pipe(fc.add_time_features)
-          .pipe(fc.add_lag_features,
-                columns=["hsig_m", "hmax_m", "tp_s", "tz_s"], lags=LAG_STEPS)
-          .pipe(fc.add_rolling_features,
-                columns=["hsig_m", "tp_s", "hmax_m"],
-                windows=ROLL_WINDOWS, stats=("mean", "std", "min", "max"))
-          .pipe(add_momentum,
-                columns=["hsig_m", "tp_s", "hmax_m"], deltas=DELTA_STEPS)
-    )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def make_result(name: str, preds: np.ndarray, y_te: pd.Series,
                 baseline_preds: np.ndarray,
@@ -102,14 +64,10 @@ def timed(label: str, fn, *args, **kwargs):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
-
 def main() -> pd.DataFrame:
     df = fc.load_data()
     y = fc.make_target(df)
-    X_eng = build_features(df)
+    X_eng = fc.build_mooloolaba_features(df)
 
     X_eng_tr, X_eng_te, y_tr, y_te = fc.chronological_split(X_eng, y)
     X_p_tr, X_p_te, _, _ = fc.chronological_split(df[["hsig_m"]], y)
@@ -120,7 +78,6 @@ def main() -> pd.DataFrame:
     results: list[fc.EvaluationResult] = []
     data_sources = ["mooloolaba"]
 
-    # Persistence — skill reference for everything below
     print("Baselines:")
     persist = timed("persistence",
         fc.evaluate_and_log, fc.PersistenceForecaster(),
@@ -129,7 +86,6 @@ def main() -> pd.DataFrame:
     results.append(persist)
     pp = persist.predictions
 
-    # Diagnostic floors (expected to be much worse than persistence)
     results.append(timed("seasonal_naive_24h",
         fc.evaluate_and_log, fc.SeasonalNaiveForecaster(period_steps=48),
         X_p_tr, y_tr, X_p_te, y_te,
@@ -139,8 +95,6 @@ def main() -> pd.DataFrame:
         X_p_tr, y_tr, X_p_te, y_te,
         name="climatology_hour", baseline_preds=pp, data_sources=data_sources))
 
-    # Ridge — the winner. With 107 engineered features and ~150k rows the
-    # problem is well-conditioned; alpha barely matters (sweep was flat).
     print("\nRidge:")
     ridge_result = timed("ridge",
         fc.evaluate_and_log, Ridge(alpha=1.0),
@@ -148,8 +102,6 @@ def main() -> pd.DataFrame:
         name="ridge", baseline_preds=pp, data_sources=data_sources)
     results.append(ridge_result)
 
-    # HGB direct (NaN-tolerant) — runs on the same feature set, recovers the
-    # SST-NaN rows the harness drops. Still doesn't beat Ridge on this data.
     print("\nHGB (direct, NaN-tolerant):")
     hgb_kw = dict(
         max_iter=800, learning_rate=0.03, max_depth=6,
@@ -166,8 +118,6 @@ def main() -> pd.DataFrame:
                extra={"nan_handling": "native_hgb_no_harness_mask"})
     results.append(hgb_result)
 
-    # HGB on persistence residuals — predict (y - hsig_m_now), add hsig_m back.
-    # Forces the model to learn only the correction over persistence.
     print("\nHGB on persistence residuals:")
     hsig_now_tr = df["hsig_m"].loc[X_eng_tr.index].to_numpy()
     hsig_now_te = df["hsig_m"].loc[X_eng_te.index].to_numpy()
@@ -189,7 +139,6 @@ def main() -> pd.DataFrame:
                extra={"target": "y - hsig_m_now (persistence residual)"})
     results.append(hgb_resid_result)
 
-    # Ensemble of the two non-baseline survivors.
     ridge_p = ridge_result.predictions
     stack = np.vstack([ridge_p, hgb_persist_resid])
     ens = np.nanmean(stack, axis=0)
