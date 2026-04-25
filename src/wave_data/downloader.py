@@ -72,7 +72,7 @@ def fetch_year_datastore(year: int, resource_id: str) -> pd.DataFrame:
         records.extend(batch)
         if len(records) >= result["total"] or not batch:
             break
-        offset += _DATASTORE_BATCH
+        offset += len(batch)
 
     df = pd.DataFrame(records).drop(columns=["_id"], errors="ignore")
     df = _normalize_columns(df, year)

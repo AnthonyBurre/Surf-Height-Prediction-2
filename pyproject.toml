@@ -18,6 +18,7 @@ notebooks = [
     "matplotlib",
     "seaborn",
     "scikit-learn",
+    "torch",
 ]
 dev = [
     "pytest",
@@ -25,3 +26,4 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["tests*"]

@@ -3,8 +3,6 @@
 The harness handles NaN rows so every model sees a consistent training
 subset regardless of how many lag/rolling features it uses.
 """
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -42,19 +40,25 @@ def evaluate(
     name: str | None = None,
     baseline_preds: np.ndarray | None = None,
 ) -> EvaluationResult:
-    """Fit on finite-feature rows, predict on the full test frame.
+    """Fit on finite-feature rows, predict on finite-feature rows, pad back.
 
     Why this split:
       - Models that need no lags (e.g. Persistence) get every training row.
       - Models with 48-step lags lose the first 48 rows; that's fine —
         the mask drops them and everyone else still aligns on the index.
-      - At predict time we keep every row so the output is index-aligned
-        with X_test, making it easy to compute metrics against y_test.
+      - sklearn raises on NaN in X at predict time, so we mask there too
+        and fill NaN into the skipped rows. The returned array is still
+        length-aligned with X_test.index for metric computation.
     """
     train_mask = _finite_row_mask(X_train, y_train)
     model.fit(X_train.loc[train_mask], y_train.loc[train_mask])
 
-    preds = np.asarray(model.predict(X_test), dtype=float)
+    predict_mask = (~X_test.isna().any(axis=1)).to_numpy()
+    preds = np.full(len(X_test), np.nan)
+    if predict_mask.any():
+        preds[predict_mask] = np.asarray(
+            model.predict(X_test.loc[predict_mask]), dtype=float
+        )
     metrics = summarise(y_test, preds, y_pred_baseline=baseline_preds)
     return EvaluationResult(
         name=name or type(model).__name__,

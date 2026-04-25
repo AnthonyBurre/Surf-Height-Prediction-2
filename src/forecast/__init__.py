@@ -34,6 +34,12 @@ from .features import (
     encode_circular,
 )
 from .metrics import bias, mae, rmse, skill_score, summarise
+from .neural import (
+    GRUForecaster,
+    LSTMForecaster,
+    SimpleRNNForecaster,
+    TCNForecaster,
+)
 
 __all__ = [
     # config
@@ -56,6 +62,11 @@ __all__ = [
     "ClimatologyHourForecaster",
     "PersistenceForecaster",
     "SeasonalNaiveForecaster",
+    # neural
+    "GRUForecaster",
+    "LSTMForecaster",
+    "SimpleRNNForecaster",
+    "TCNForecaster",
     # metrics
     "bias",
     "mae",

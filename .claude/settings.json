@@ -10,5 +10,11 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(./data/**)",
+      "Read(./**/*.ipynb)"
+    ]
   }
 }

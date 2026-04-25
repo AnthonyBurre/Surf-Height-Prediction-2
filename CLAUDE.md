@@ -21,6 +21,12 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 - **`src/forecast/` is the modelling package**, separate from `src/wave_data/` (ETL). Flat import surface: `from forecast import load_data, make_target, chronological_split, PersistenceForecaster, evaluate, compare, ...`. Experiments live in `notebooks/forecast_comparison.ipynb`.
 
+- **Sequence models live in `src/forecast/neural.py`** (`SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`). They window their own input (raw channels + sin/cos direction, no lag/rolling), so pass them the `encode_circular` frame — not the full lag-feature matrix used by the linear/tree models. Requires `torch` from the `notebooks` extra.
+
+- **Plotting lives in `src/viz/`**, separate from `forecast/` on purpose: it's source-agnostic so future data sources (other buoys, BOM/GFS atmospheric grids) reuse it without pulling in modelling deps. Multi-source functions take `dict[str, pd.Series | pd.DataFrame]` keyed by source label; that label flows into legends and heatmap titles. Notebook-level `plt.plot(...)` calls should migrate here if they're worth keeping.
+
+- **Never Read `.ipynb` files or anything under `data/` directly** — executed notebooks carry huge inline base64 chart outputs, and the unified CSV is ~10 MB. Both blow up token usage. The `Read` tool is blocked on those paths by `.claude/settings.json`. Inspect notebooks via `jupyter nbconvert --to script --stdout <path>` (strips outputs); inspect data via small Python/pandas scripts that print summaries (`df.describe()`, `df.head()`, etc.). Wholesale notebook replacement: `rm` then Write, or Python JSON dump via Bash.
+
 - **Forecast target is indexed at the origin `t`, not the prediction time `t+h`.** `make_target()` returns `hsig_m.shift(-HORIZON_STEPS)` so `y.loc[t]` is the value *at* `t + 12h`. The last `HORIZON_STEPS` rows of `y` are NaN — `evaluate()` masks them, direct `model.fit` callers must mask.
 
 - **Rolling features lag-shift by 1 step** in `features.add_rolling_features`. Without this the window includes the current observation, leaking the label. Enforced by `test_add_rolling_features_are_shifted_by_one`.
