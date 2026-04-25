@@ -83,7 +83,7 @@ def main() -> None:
         peak = lags_h[int(np.nanargmax(rs))]
         print(f"  {name:11s} peak r={max(rs):.3f} at lag={peak:+d}h")
     ax.axvline(0, color="black", linewidth=0.5)
-    ax.set(xlabel="Lag (hours, +ve = neighbour leads Mooloolaba)",
+    ax.set(xlabel="Lag (hours) - positive lag means neighbour leads Mooloolaba",
            ylabel="Pearson r (vs Mooloolaba hsig_m)",
            title="Lagged cross-correlation of hsig_m")
     ax.legend()

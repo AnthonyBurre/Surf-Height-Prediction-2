@@ -22,6 +22,16 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "c0cfd5c8-59c1-4fcf-b9d9-75bce4149808",
     },
     "caloundra": {
+        # 2013 resource is a bundle covering 2013-2015; pre-2017 column schema.
+        2013: "fe51b69b-df4e-4eb2-981f-3e18707bd09f",
+        2016: "be62134c-15a2-4736-8b2a-bbfd323f10ce",
+        2017: "80481a30-ac2d-4e67-82e9-d5fcb282f58b",
+        2018: "e302c519-77ec-46e5-b819-767ac177f37a",
+        2019: "6603ad4e-98cd-4215-877c-61b9759cbbd0",
+        2020: "fdd1bc53-1d59-46bd-a5a6-90c18f851bd8",
+        2021: "43354fd8-4a9b-4004-b42f-2fcb9e8d5b8a",
+        2022: "a82ce37b-cca5-44db-a2f1-14c2b6cea836",
+        2023: "f7a3f62e-4021-4d39-9fdd-4e13b5d62223",
         2024: "a7d465ba-0cab-4b4e-a93c-4c8c86c196b5",
         2025: "d276f08f-5853-493e-a607-0dfa60f6e850",
     },
@@ -30,6 +40,16 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "60abceb3-2949-48df-8181-3f98ae72108d",
     },
     "gold-coast": {
+        2015: "30cdfd68-52e9-4c5c-933c-03c2fed5a11a",
+        2016: "c5e598d5-5a9a-45be-9da6-a9f47042e006",
+        2017: "f85931b4-926a-49e3-9e56-d65bd49a9f14",
+        2018: "d1049f97-45a9-4b3d-80be-7fce8cd3ec29",
+        2019: "ee5859f9-e55c-434f-b20c-7da30b1e53e1",
+        2020: "73b4e42a-f3e7-4632-8b8e-d52205899048",
+        2021: "edc414a8-3ffa-47a2-9d9b-14f07eb22072",
+        # 2022 Mk4 (e0068000-…) skipped — empty Date/Time fields in datastore.
+        2022: "2eeb6b4d-f52a-45c1-b640-336aaf53b40b",
+        2023: "618d4d1e-fa39-4e04-929a-94ca6e107973",
         2024: "67c8cf49-cb29-4cd1-86ff-d61bfdb8cbba",
         2025: "a8a12129-c99d-45f6-832b-a5cee4754b54",
     },
