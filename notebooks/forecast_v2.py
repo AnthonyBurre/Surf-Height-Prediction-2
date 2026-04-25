@@ -78,20 +78,21 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def make_result(name: str, preds: np.ndarray, y_te: pd.Series,
-                baseline_preds: np.ndarray) -> fc.EvaluationResult:
+                baseline_preds: np.ndarray,
+                model: object | None = None) -> fc.EvaluationResult:
     metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=baseline_preds)
-    return fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=None)
+    return fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=model)
 
 
 def fit_hgb_direct(kw: dict, X_tr: pd.DataFrame, y_tr: pd.Series,
-                   X_te: pd.DataFrame) -> np.ndarray:
+                   X_te: pd.DataFrame) -> tuple[np.ndarray, HistGradientBoostingRegressor]:
     """HGB tolerates NaN in X natively, so skip the harness mask and recover
     the rows it would otherwise drop (here ~12% — driven by SST's 10% NaN
     rate)."""
     mask = ~y_tr.isna()
     m = HistGradientBoostingRegressor(**kw)
     m.fit(X_tr.loc[mask].to_numpy(), y_tr.loc[mask].to_numpy())
-    return m.predict(X_te.to_numpy())
+    return m.predict(X_te.to_numpy()), m
 
 
 def timed(label: str, fn, *args, **kwargs):
@@ -117,32 +118,34 @@ def main() -> pd.DataFrame:
           f"train={len(X_eng_tr):,}  test={len(X_eng_te):,}\n")
 
     results: list[fc.EvaluationResult] = []
+    data_sources = ["mooloolaba"]
 
     # Persistence — skill reference for everything below
     print("Baselines:")
     persist = timed("persistence",
-        fc.evaluate, fc.PersistenceForecaster(),
-        X_p_tr, y_tr, X_p_te, y_te, name="persistence")
+        fc.evaluate_and_log, fc.PersistenceForecaster(),
+        X_p_tr, y_tr, X_p_te, y_te,
+        name="persistence", data_sources=data_sources)
     results.append(persist)
     pp = persist.predictions
 
     # Diagnostic floors (expected to be much worse than persistence)
     results.append(timed("seasonal_naive_24h",
-        fc.evaluate, fc.SeasonalNaiveForecaster(period_steps=48),
+        fc.evaluate_and_log, fc.SeasonalNaiveForecaster(period_steps=48),
         X_p_tr, y_tr, X_p_te, y_te,
-        name="seasonal_naive_24h", baseline_preds=pp))
+        name="seasonal_naive_24h", baseline_preds=pp, data_sources=data_sources))
     results.append(timed("climatology_hour",
-        fc.evaluate, fc.ClimatologyHourForecaster(),
+        fc.evaluate_and_log, fc.ClimatologyHourForecaster(),
         X_p_tr, y_tr, X_p_te, y_te,
-        name="climatology_hour", baseline_preds=pp))
+        name="climatology_hour", baseline_preds=pp, data_sources=data_sources))
 
     # Ridge — the winner. With 107 engineered features and ~150k rows the
     # problem is well-conditioned; alpha barely matters (sweep was flat).
     print("\nRidge:")
     ridge_result = timed("ridge",
-        fc.evaluate, Ridge(alpha=1.0),
+        fc.evaluate_and_log, Ridge(alpha=1.0),
         X_eng_tr, y_tr, X_eng_te, y_te,
-        name="ridge", baseline_preds=pp)
+        name="ridge", baseline_preds=pp, data_sources=data_sources)
     results.append(ridge_result)
 
     # HGB direct (NaN-tolerant) — runs on the same feature set, recovers the
@@ -154,9 +157,14 @@ def main() -> pd.DataFrame:
         early_stopping=True, validation_fraction=0.15, n_iter_no_change=40,
     )
     t0 = time.time()
-    hgb_preds = fit_hgb_direct(hgb_kw, X_eng_tr, y_tr, X_eng_te)
+    hgb_preds, hgb_model = fit_hgb_direct(hgb_kw, X_eng_tr, y_tr, X_eng_te)
     print(f"  [{time.time() - t0:5.1f}s] hgb_direct")
-    results.append(make_result("hgb_direct", hgb_preds, y_te, pp))
+    hgb_result = make_result("hgb_direct", hgb_preds, y_te, pp, model=hgb_model)
+    fc.log_run(hgb_result, data_sources=data_sources,
+               train_index=X_eng_tr.index, test_index=X_eng_te.index,
+               n_features=X_eng_tr.shape[1],
+               extra={"nan_handling": "native_hgb_no_harness_mask"})
+    results.append(hgb_result)
 
     # HGB on persistence residuals — predict (y - hsig_m_now), add hsig_m back.
     # Forces the model to learn only the correction over persistence.
@@ -172,13 +180,26 @@ def main() -> pd.DataFrame:
     delta = hgb_resid.predict(X_eng_te.to_numpy())
     hgb_persist_resid = hsig_now_te + delta
     print(f"  [{time.time() - t0:5.1f}s] hgb_persistence_residual")
-    results.append(make_result("hgb_persistence_residual", hgb_persist_resid, y_te, pp))
+    hgb_resid_result = make_result(
+        "hgb_persistence_residual", hgb_persist_resid, y_te, pp, model=hgb_resid,
+    )
+    fc.log_run(hgb_resid_result, data_sources=data_sources,
+               train_index=X_eng_tr.index, test_index=X_eng_te.index,
+               n_features=X_eng_tr.shape[1],
+               extra={"target": "y - hsig_m_now (persistence residual)"})
+    results.append(hgb_resid_result)
 
     # Ensemble of the two non-baseline survivors.
     ridge_p = ridge_result.predictions
     stack = np.vstack([ridge_p, hgb_persist_resid])
     ens = np.nanmean(stack, axis=0)
-    results.append(make_result("ensemble_ridge_hgbresid", ens, y_te, pp))
+    ens_result = make_result("ensemble_ridge_hgbresid", ens, y_te, pp)
+    fc.log_run(ens_result, data_sources=data_sources,
+               train_index=X_eng_tr.index, test_index=X_eng_te.index,
+               n_features=X_eng_tr.shape[1],
+               extra={"members": ["ridge", "hgb_persistence_residual"],
+                      "combiner": "nanmean"})
+    results.append(ens_result)
 
     print("\n=== Results (sorted by RMSE) ===")
     table = fc.compare(results).round(4)
