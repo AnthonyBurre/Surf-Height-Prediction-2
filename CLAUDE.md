@@ -13,9 +13,9 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 - **Index is UTC everywhere downstream of `pipeline.clean`**, even though the raw CKAN records are naive AEST. `datetime_utc` is therefore the index name throughout — no Brisbane-time conversion happens for analysis or plots.
 
-- **Sequence models live in `src/forecast/neural.py`** (`SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`). They window their own input (raw channels + sin/cos direction, no lag/rolling), so pass them the `encode_circular` frame — not the full lag-feature matrix used by the linear/tree models. Requires `torch` from the `notebooks` extra.
+- **Sequence models live in `src/forecast/neural.py`** (`SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`). They window their own input (raw channels + sin/cos direction, no lag/rolling), so pass them the `encode_circular` frame — not the full lag-feature matrix used by the linear/tree models. Requires `torch` from the `forecast` extra (`pip install -e '.[forecast]'`).
 
-- **Never Read `.ipynb` files or anything under `data/` directly** — executed notebooks carry huge inline base64 chart outputs, and the unified CSV is ~10 MB. Both blow up token usage. The `Read` tool is blocked on those paths by `.claude/settings.json`. Inspect notebooks via `jupyter nbconvert --to script --stdout <path>` (strips outputs); inspect data via small Python/pandas scripts that print summaries (`df.describe()`, `df.head()`, etc.). Wholesale notebook replacement: `rm` then Write, or Python JSON dump via Bash.
+- **Never Read anything under `data/` directly** — the unified CSV is ~10 MB and will blow up token usage. Inspect data via small Python/pandas scripts that print summaries (`df.describe()`, `df.head()`, etc.).
 
 - **Rolling features lag-shift by 1 step** in `features.add_rolling_features` — past-only by convention (see its docstring). Enforced by `test_add_rolling_features_are_shifted_by_one`.
 

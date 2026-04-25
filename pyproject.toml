@@ -21,13 +21,6 @@ viz = [
 forecast = [
     "torch",
 ]
-notebooks = [
-    "ipykernel",
-    "matplotlib",
-    "seaborn",
-    "scikit-learn",
-    "torch",
-]
 dev = [
     "pytest",
     "scikit-learn",
