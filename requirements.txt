@@ -7,10 +7,7 @@ fonttools==4.60.1
 fsspec==2026.2.0
 idna==3.11
 iniconfig==2.3.0
-ipython_pygments_lexers==1.1.1
 joblib==1.5.2
-jupyter_client==8.6.3
-jupyter_core==5.8.1
 kiwisolver==1.4.9
 matplotlib==3.10.7
 mpmath==1.3.0
@@ -18,7 +15,6 @@ networkx==3.6.1
 numpy==2.3.3
 packaging==25.0
 pandas==2.3.3
-pandocfilters==1.5.1
 pillow==11.3.0
 pluggy==1.6.0
 Pygments==2.20.0
@@ -39,4 +35,4 @@ torch==2.11.0
 typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
--e git+https://github.com/AnthonyBurre/Surf-Height-Prediction-2.git@b5ecaab45a4a2dc355c1e184a0866bd8b61f8ecc#egg=wave_data
+-e .
