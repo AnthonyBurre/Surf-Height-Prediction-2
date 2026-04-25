@@ -5,8 +5,6 @@ thing that also knows the autocorrelation structure of the series.
 Persistence is that thing for any process with strong short-horizon
 autocorrelation; skill-score-vs-persistence is the honest metric.
 """
-from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 
