@@ -44,6 +44,15 @@ Download, clean, and export a unified CSV (a few minutes over the CKAN Datastore
 
 Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-moreton-bay`.
 
+A parallel `wind_data` package fetches hourly 10 m wind from co-located QLD AWS stations on the same CKAN portal:
+
+```bash
+# Default: Mountain Creek 2015-2024 → data/mountain-creek_wind_data_2015-2024.csv
+./.venv/bin/python -m wind_data
+```
+
+Supported stations: `mountain-creek` (Sunshine Coast, effectively co-located with the Mooloolaba buoy).
+
 ## Modelling
 
 All modelling code lives in `src/forecast/` and exposes a flat import surface:
@@ -100,12 +109,13 @@ All scripts are plain `.py` files — run directly:
 | `forecast_v2.py` | Full 2015-2025 history. Compares persistence, Ridge, HGB (direct + residual target), and a Ridge/HGB ensemble. Best: Ridge RMSE 0.265, skill +11.3%. |
 | `mooloolaba_brisbane_forecast.py` | Ridge + Lasso on the 2015-2025 Mooloolaba + Brisbane overlap window. |
 | `mooloolaba_brisbane_lstm.py` | LSTM on the same window. Convergence findings across several architecture configs documented in the script header (~25 min CPU per run). |
+| `mooloolaba_wind_forecast.py` | 2015-2024 window. Adds Mountain Creek (Sunshine Coast AWS) hourly wind to Mooloolaba features. Ridge + Lasso. Key finding: wind adds +3.9 pp skill over the wave-only Ridge baseline (RMSE 0.248, +12.9% vs persistence). |
 | `multi_buoy_forecast.py` | 2024-2025 window, all four neighbour buoys. Ridge + HGB. Key finding: neighbour buoys add ~+6 pp skill (RMSE 0.244, +19.5% vs persistence). |
 | `buoy_eda.py` | Multi-buoy EDA: coverage, distributions, seasonality, direction, cross-source correlation. |
 
 ## Results
 
-All runs use a chronological 80/20 split. Skill score is vs. persistence on the same test window. The 2024-2025 window is a separate split scoped to the neighbour-buoy overlap period; its persistence baseline (RMSE 0.272) differs from the full-history one (RMSE 0.289).
+All runs use a chronological 80/20 split. Skill score is vs. persistence on the same test window. Persistence baselines differ across windows (the full-history split, the 2024-2025 neighbour-buoy overlap, and the 2015-2024 wind-overlap window) so RMSEs are only directly comparable within the same window.
 
 | Model | Data sources | Window | RMSE | Skill |
 |-------|-------------|--------|------|-------|
@@ -114,10 +124,16 @@ All runs use a chronological 80/20 split. Skill score is vs. persistence on the 
 | HGB (persistence-residual target) | Mooloolaba | 2015-2025 | 0.282 | +5.2% |
 | Ridge + HGB ensemble | Mooloolaba | 2015-2025 | 0.277 | +8.2% |
 | Lasso | Mooloolaba + Brisbane | 2015-2025 | 0.267 | +15.5% |
-| LSTM (50 epochs, seq_len=48) | Mooloolaba + Brisbane | 2015-2025 | 0.301 | +3.7% |
+| LSTM (15 epochs, seq_len=48, 2 layers) | Mooloolaba + Brisbane | 2015-2025 | 0.362 | −55.2% |
+| Persistence (baseline) | Mooloolaba | 2015-2024 | 0.265 | — |
+| Ridge | Mooloolaba | 2015-2024 | 0.253 | +9.0% |
+| Ridge + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.9% |
+| Lasso + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.6% |
 | Persistence (baseline) | Mooloolaba | 2024-2025 | 0.272 | — |
 | Ridge | Mooloolaba + 3 neighbours | 2024-2025 | 0.244 | +19.5% |
 | HGB | Mooloolaba + 3 neighbours | 2024-2025 | 0.258 | +10.0% |
+
+The LSTM row reflects the best of three logged configurations in `experiments.jsonl`; all three are well below persistence at this horizon. With raw circular-encoded channels and no engineered lag/momentum features, the model regresses hard toward the mean — see the discussion in `notebooks/forecast_v2.py`.
 
 The full set of logged runs is in `experiments.jsonl`.
 
@@ -179,7 +195,10 @@ Missing or erroneous readings (`-99.9` in raw files) are replaced with `NaN` and
 
 ## Data source
 
-Queensland Government open data portal, wave buoy network. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. Supported buoys and their available history: Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
+Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames.
+
+- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
+- **Air-quality / meteorology AWS network.** Mountain Creek (2015–2024) — Sunshine Coast station at -26.69, 153.10, with a 10 m ultrasonic wind sensor. Pollutant fields are dropped at clean time; only `wind_dir_deg`, `wind_speed_ms`, and the two dispersion stats are kept.
 
 ## License
 
