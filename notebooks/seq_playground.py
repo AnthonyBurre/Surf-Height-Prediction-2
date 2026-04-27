@@ -3,7 +3,7 @@
 Run:  ./.venv/bin/python notebooks/seq_playground.py
 
 A single CONFIG dict at the top controls everything: data window, neighbour
-buoys, wind on/off, feature mode (raw vs engineered), model class, and all
+buoys, wind stations, feature mode (raw vs engineered), model class, and all
 hyperparameters. Edit it in place and re-run - no other code changes needed.
 Each completed run appends to experiments.jsonl with a name derived from the
 CONFIG, so back-to-back runs with different settings stay distinguishable.
@@ -29,13 +29,14 @@ Starting points to try (paste into CONFIG)
 1. Quick smoke (≈30s on CPU):
      model="gru", feature_mode="raw", epochs=3, subsample_steps=20000
 2. Default sane run (≈8 min CPU):
-     model="gru", feature_mode="raw", include_wind=True, epochs=15
+     model="gru", feature_mode="raw", wind_stations=["mountain-creek"], epochs=15
 3. Engineered features — should beat the raw-input LSTM:
-     model="gru", feature_mode="engineered", include_wind=True, epochs=15
+     model="gru", feature_mode="engineered", wind_stations=["mountain-creek"], epochs=15
 4. TCN, parallelisable conv-based:
-     model="tcn", feature_mode="raw", include_wind=True, epochs=20
+     model="tcn", feature_mode="raw", wind_stations=["mountain-creek"], epochs=20
 5. Throw everything in:
-     model="gru", feature_mode="engineered", include_wind=True,
+     model="gru", feature_mode="engineered",
+     wind_stations=["mountain-creek", "deception-bay"],
      neighbours=["brisbane"], epochs=30, hidden=128
 
 Tips
@@ -74,9 +75,9 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 
 CONFIG: dict = {
     # --- data ---
-    "year_max":      2024,        # cap wave history; 2024 = full Mountain Creek wind overlap
+    "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
     "neighbours":    [],          # subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
-    "include_wind":  True,        # adds Mountain Creek hourly wind (2015-2024)
+    "wind_stations": ["mountain-creek"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- features ---
     # "raw"        — circular-encoded raw channels + sin/cos time features
@@ -103,7 +104,7 @@ CONFIG: dict = {
     "tcn_dropout":      0.1,
 
     # --- run / logging ---
-    "run_name":        "seqplay",     # log entries get suffixed with model+mode+wind
+    "run_name":        "neuropt",     # log entries get suffixed with model+mode+wind
     "log_to_jsonl":    True,
     "verbose_train":   True,
     "device":          None,           # None = auto-detect (cuda > mps > cpu)
@@ -119,6 +120,11 @@ _NEIGHBOUR_FILES = {
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
     "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
+}
+
+_WIND_FILES = {
+    "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
+    "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
 }
 
 
@@ -150,14 +156,27 @@ def load_neighbours(target_index: pd.DatetimeIndex, neighbours: list[str]) -> di
     return out
 
 
-def load_wind(target_index: pd.DatetimeIndex) -> pd.DataFrame:
-    """Hourly Mountain Creek wind, sin/cos-encoded for direction, ffill'd to 30-min grid."""
-    wind = pd.read_csv(
-        DATA_DIR / "mountain-creek_wind_data_2015-2024.csv",
-        parse_dates=["datetime_utc"], index_col="datetime_utc",
-    )
-    wind = encode_circular(wind, columns=["wind_dir_deg"])
-    return wind.reindex(target_index, method="ffill")
+def load_wind(target_index: pd.DatetimeIndex,
+              stations: list[str]) -> pd.DataFrame | None:
+    """Hourly wind for one or more stations, sin/cos-encoded, ffill'd to 30-min grid.
+
+    Returns None if no stations are requested. Multi-station loads namespace
+    each station's columns by slug (e.g. ``deception-bay_wind_speed_ms``).
+    """
+    if not stations:
+        return None
+    frames: list[pd.DataFrame] = []
+    for s in stations:
+        if s not in _WIND_FILES:
+            raise ValueError(f"Unknown wind station {s!r}; supported: {list(_WIND_FILES)}")
+        w = pd.read_csv(
+            DATA_DIR / _WIND_FILES[s],
+            parse_dates=["datetime_utc"], index_col="datetime_utc",
+        )
+        w = encode_circular(w, columns=["wind_dir_deg"])
+        w = w.add_prefix(f"{s}_")
+        frames.append(w.reindex(target_index, method="ffill"))
+    return pd.concat(frames, axis=1)
 
 
 def build_features(
@@ -212,10 +231,14 @@ def build_model(cfg: dict, device: str):
     raise ValueError(f"Unknown model {name!r}; choose lstm/gru/rnn/tcn")
 
 
+def _wind_tag(stations: list[str]) -> str:
+    return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
+
+
 def make_run_name(cfg: dict) -> str:
     parts = [cfg["run_name"], cfg["model"], cfg["feature_mode"]]
-    if cfg["include_wind"]:
-        parts.append("wind")
+    if cfg["wind_stations"]:
+        parts.append("wind-" + _wind_tag(cfg["wind_stations"]))
     if cfg["neighbours"]:
         parts.append("+".join(cfg["neighbours"]))
     return "_".join(parts)
@@ -228,7 +251,7 @@ def main() -> None:
 
     wave = load_wave(cfg["year_max"])
     neighbours = load_neighbours(wave.index, cfg["neighbours"])
-    wind = load_wind(wave.index) if cfg["include_wind"] else None
+    wind = load_wind(wave.index, cfg["wind_stations"])
 
     # Restrict to wind overlap when wind is in play, so every training row has wind.
     if wind is not None:
@@ -286,7 +309,7 @@ def main() -> None:
     print(f"  MAE   {metrics['MAE']:.4f}    Bias  {metrics['Bias']:+.4f}")
 
     if cfg["log_to_jsonl"]:
-        sources = ["mooloolaba"] + cfg["neighbours"] + (["mountain-creek"] if cfg["include_wind"] else [])
+        sources = ["mooloolaba"] + cfg["neighbours"] + cfg["wind_stations"]
         fc.log_run(
             result,
             data_sources=sources,
@@ -302,7 +325,7 @@ def main() -> None:
                 "lr":               cfg["lr"],
                 "batch_size":       cfg["batch_size"],
                 "device":           device,
-                "include_wind":     cfg["include_wind"],
+                "wind_stations":    cfg["wind_stations"],
                 "subsample_steps":  cfg["subsample_steps"],
                 "elapsed_min":      round(elapsed / 60, 2),
                 "imputation":       "mean",

@@ -3,59 +3,24 @@
 Run:  ./.venv/bin/python notebooks/linear_playground.py
 
 A single CONFIG dict at the top controls everything: data window, neighbour
-buoys, wind on/off, FeatureConfig knobs, which models to run (Ridge / Lasso /
+buoys, wind stations, FeatureConfig knobs, which models to run (Ridge / Lasso /
 HGB), HGB residual-target mode, and an optional nanmean ensemble. Edit it in
 place and re-run — no other code changes needed.
 
 Each completed run appends to experiments.jsonl with a name derived from the
 CONFIG, so back-to-back runs stay distinguishable.
 
-Why this script exists
-----------------------
-Four earlier scripts cover overlapping but hard-coded scenarios:
-
-  forecast_v2.py               Mooloolaba 2015-2025, Ridge + HGB variants + ensemble
-  mooloolaba_brisbane_forecast.py  Ridge + Lasso with Brisbane, 2015-2025
-  mooloolaba_wind_forecast.py  Ridge + Lasso with Mountain Creek wind, 2015-2024
-  multi_buoy_forecast.py       Ridge + HGB, 2024-2025 with 3 neighbour buoys
-
-This playground replaces all four. Paste any of the starting points below to
-reproduce a previous run, or tweak freely.
-
-Starting points (paste into CONFIG)
-------------------------------------
-1. Full-history Mooloolaba Ridge (replicates forecast_v2):
-     year_min=None, year_max=None, neighbours=[], include_wind=False,
-     ridge=True, hgb=True, hgb_residual_target=True, ensemble=True
-
-2. Mooloolaba + Brisbane linear (replicates mooloolaba_brisbane_forecast):
-     year_min=None, year_max=None, neighbours=["brisbane"],
-     ridge=True, lasso={"alpha": 0.001, "max_iter": 5000}
-
-3. Wind-augmented window (replicates mooloolaba_wind_forecast):
-     year_min=None, year_max=2024, include_wind=True,
-     ridge=True, lasso={"alpha": 0.001, "max_iter": 10000}
-
-4. Multi-buoy 2024-2025 (replicates multi_buoy_forecast):
-     year_min=2024, year_max=None,
-     neighbours=["caloundra", "brisbane", "goldcoast"],
-     ridge=True, hgb=True
-
-5. Kitchen sink — everything:
-     neighbours=["brisbane", "caloundra", "goldcoast", "north-moreton-bay"],
-     include_wind=True, year_max=2024,
-     ridge=True, lasso=True, hgb=True, hgb_residual_target=True, ensemble=True
 
 Tips
 ----
 - Set a model key to False to skip it, True to use the defaults below, or a
   dict to override specific hyperparameters (merged with the defaults).
-- ``hgb_residual_target=True`` trains HGB on y − persistence(y) then adds
+- ``hgb_residual_target=True`` trains HGB on y - persistence(y) then adds
   persistence back at predict time; often improves HGB skill slightly.
 - ``ensemble=True`` computes a nanmean of every enabled model's predictions.
 - Year trimming is done BEFORE the wind overlap restriction, so
-  ``year_max=2024`` + ``include_wind=True`` just restricts to 2015-2024 wind
-  data as usual.
+  ``year_max=2024`` + a non-empty ``wind_stations`` just restricts to the
+  selected stations' wind window (currently 2015-2024 for both).
 - Persistence is computed on the same test window as all other models.
 """
 
@@ -85,11 +50,11 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 CONFIG: dict = {
     # --- data window ---
     "year_min":     None,   # None = data start; e.g. 2024 for the short multi-buoy window
-    "year_max":     None,   # None = data end;   e.g. 2024 to match the wind window
+    "year_max":     2024,   # None = data end;   e.g. 2024 to match the wind window
 
     # --- extra sources ---
-    "neighbours":   [],     # any subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
-    "include_wind": False,  # adds Mountain Creek hourly wind (2015-2024)
+    "neighbours":     ["caloundra", "brisbane", "goldcoast", "north-moreton-bay"],     # any subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
+    "wind_stations":  ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- feature engineering (FeatureConfig knobs) ---
     # Set to None to use the package defaults.
@@ -104,17 +69,17 @@ CONFIG: dict = {
     # dict  → run, merging the dict over the defaults
     # False → skip
     "ridge":  True,     # default: {"alpha": 1.0}
-    "lasso":  False,    # default: {"alpha": 0.001, "max_iter": 10000}
-    "hgb":    False,    # default: see HGB_DEFAULTS below
+    "lasso":  True,    # default: {"alpha": 0.001, "max_iter": 10000}
+    "hgb":    True,    # default: see HGB_DEFAULTS below
 
     # HGB-specific: train on y − persistence(y) instead of y
-    "hgb_residual_target": False,
+    "hgb_residual_target": True,
 
     # nanmean ensemble of all enabled model predictions
-    "ensemble": False,
+    "ensemble": True,
 
     # --- run / logging ---
-    "run_name":     "linplay",  # log entries get suffixed with active models + sources
+    "run_name":     "lineopt",  # log entries get suffixed with active models + sources
     "log_to_jsonl": True,
 }
 
@@ -135,6 +100,11 @@ _NEIGHBOUR_FILES = {
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
     "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
+}
+
+_WIND_FILES = {
+    "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
+    "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
 }
 
 # ---------------------------------------------------------------------------
@@ -171,18 +141,17 @@ def _make_result(name: str, preds: np.ndarray, y_te: pd.Series,
     return fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=model)
 
 
+def _wind_tag(stations: list[str]) -> str:
+    """Two-letter abbreviation per station (e.g. mountain-creek -> mc)."""
+    return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
+
+
 def _make_run_name(cfg: dict) -> str:
     parts = [cfg["run_name"]]
-    active = [m for m in ("ridge", "lasso", "hgb") if cfg[m] is not False]
-    parts.extend(active)
-    if cfg["include_wind"]:
-        parts.append("wind")
+    if cfg["wind_stations"]:
+        parts.append("wind-" + _wind_tag(cfg["wind_stations"]))
     if cfg["neighbours"]:
         parts.append("+".join(n[:4] for n in cfg["neighbours"]))
-    if cfg.get("hgb_residual_target") and cfg["hgb"] is not False:
-        parts.append("resid")
-    if cfg.get("ensemble"):
-        parts.append("ens")
     return "_".join(parts)
 
 
@@ -213,13 +182,28 @@ def _load_neighbours(target_index: pd.DatetimeIndex,
     return out
 
 
-def _load_wind(target_index: pd.DatetimeIndex) -> pd.DataFrame:
-    wind = pd.read_csv(
-        DATA_DIR / "mountain-creek_wind_data_2015-2024.csv",
-        parse_dates=["datetime_utc"], index_col="datetime_utc",
-    )
-    wind = encode_circular(wind, columns=["wind_dir_deg"])
-    return wind.reindex(target_index, method="ffill")
+def _load_wind(target_index: pd.DatetimeIndex,
+               stations: list[str]) -> pd.DataFrame | None:
+    """Load one or more wind stations into a single station-prefixed frame.
+
+    Returns None if no stations are requested. When multiple stations are
+    requested, columns are namespaced by station slug (e.g.
+    ``mountain-creek_wind_speed_ms``) so models see independent inputs.
+    """
+    if not stations:
+        return None
+    frames: list[pd.DataFrame] = []
+    for s in stations:
+        if s not in _WIND_FILES:
+            raise ValueError(f"Unknown wind station {s!r}; supported: {list(_WIND_FILES)}")
+        w = pd.read_csv(
+            DATA_DIR / _WIND_FILES[s],
+            parse_dates=["datetime_utc"], index_col="datetime_utc",
+        )
+        w = encode_circular(w, columns=["wind_dir_deg"])
+        w = w.add_prefix(f"{s}_")
+        frames.append(w.reindex(target_index, method="ffill"))
+    return pd.concat(frames, axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +326,7 @@ def main() -> None:
 
     wave = _load_wave(cfg["year_min"], cfg["year_max"])
     neighbours = _load_neighbours(wave.index, cfg["neighbours"])
-    wind = _load_wind(wave.index) if cfg["include_wind"] else None
+    wind = _load_wind(wave.index, cfg["wind_stations"])
 
     if wind is not None:
         valid = wind.dropna(how="all")
@@ -374,14 +358,14 @@ def main() -> None:
     print(f"top NaN cols   : {worst}\n")
 
     run_name = _make_run_name(cfg)
-    sources = ["mooloolaba"] + cfg["neighbours"] + (["mountain-creek"] if cfg["include_wind"] else [])
+    sources = ["mooloolaba"] + cfg["neighbours"] + cfg["wind_stations"]
     log = cfg["log_to_jsonl"]
     window_str = f"{wave.index.min().date()}:{wave.index.max().date()}"
     extra_base: dict = {
         "window": window_str,
         "imputation": "mean",
         "n_neighbours": len(cfg["neighbours"]),
-        "include_wind": cfg["include_wind"],
+        "wind_stations": cfg["wind_stations"],
     }
 
     print("=== Persistence baseline ===")
@@ -450,7 +434,8 @@ def main() -> None:
             for _, row in recent.iterrows():
                 m = row["metrics"]
                 ex = row.get("extra") or {}
-                tag = f"w={ex.get('include_wind','?')} nb={ex.get('n_neighbours','?')}"
+                ws = ex.get("wind_stations", "?")
+                tag = f"w={ws} nb={ex.get('n_neighbours','?')}"
                 skill = m.get("SkillVsBaseline", 0)
                 print(f"  {row['name']:60s}  {tag:20s}  RMSE {m['RMSE']:.4f}  Skill {skill:+.4f}")
 

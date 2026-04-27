@@ -43,7 +43,7 @@ def residual_timeseries(
     model_name: str | None = None,
     ax: Axes | None = None,
 ) -> Axes:
-    """Plot residuals (y_true − y_pred) over time, with a zero reference line."""
+    """Plot residuals (y_true - y_pred) over time, with a zero reference line."""
     if not isinstance(y_pred, pd.Series):
         y_pred = pd.Series(y_pred, index=y_true.index, name="pred")
     resid = (y_true - y_pred).dropna()

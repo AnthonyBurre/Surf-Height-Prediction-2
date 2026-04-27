@@ -39,10 +39,18 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     gap-free hourly grid so downstream lag/rolling features have a
     well-defined temporal axis.
     """
-    # Source provides Date as an ISO-midnight timestamp string and Time as
-    # "HH:MM" — concatenate the date portion with the time of day to get the
-    # full naive AEST timestamp.
-    timestamps = pd.to_datetime(df["Date"].astype(str).str[:10] + " " + df["Time"], errors="coerce")
+    # Source Date format varies by year: most years use ISO ("2024-01-01T00:00:00")
+    # but some (e.g. Mountain Creek and Deception Bay 2019) emit DD/MM/YYYY.
+    # `format="mixed", dayfirst=True` parses both: ISO strings are unambiguous,
+    # and DD/MM/YYYY is interpreted day-first as intended. Without dayfirst,
+    # pandas defaults to month-first and silently coerces ~95% of a DD/MM year
+    # to NaT.
+    timestamps = pd.to_datetime(
+        df["Date"].astype(str).str[:10] + " " + df["Time"],
+        format="mixed",
+        dayfirst=True,
+        errors="coerce",
+    )
     df = df.assign(datetime_utc=timestamps).dropna(subset=["datetime_utc"])
 
     # Keep only the renameable wind columns; pollutant / temperature fields

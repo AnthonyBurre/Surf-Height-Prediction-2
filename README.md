@@ -2,12 +2,12 @@
 
 Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys (Brisbane, Caloundra, Gold Coast, North Moreton Bay) are used as additional input features where their histories overlap.
 
-Three installed Python packages back it:
+Four installed Python packages back it:
 
 - **`wave_data`** — ETL. Downloads per-buoy yearly records from the CKAN Datastore API, unifies schema, and writes a cleaned CSV on a 30-minute grid.
+- **`wind_data`** - ETL.
 - **`viz`** — source-agnostic plotting. Time series (incl. multi-source overlays), correlation heatmaps (feature × horizon, lookback × horizon, cross-source), and model-comparison / residual-analysis diagnostics.
 - **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
-
 
 Experiment scripts in `notebooks/` run on top of these packages.
 
@@ -44,14 +44,18 @@ Download, clean, and export a unified CSV (a few minutes over the CKAN Datastore
 
 Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-moreton-bay`.
 
-A parallel `wind_data` package fetches hourly 10 m wind from co-located QLD AWS stations on the same CKAN portal:
+A parallel `wind_data` package fetches hourly 10 m wind from QLD AWS stations on the same CKAN portal:
 
 ```bash
 # Default: Mountain Creek 2015-2024 → data/mountain-creek_wind_data_2015-2024.csv
 ./.venv/bin/python -m wind_data
+
+# Any supported station
+./.venv/bin/python -m wind_data --station mountain-creek
+./.venv/bin/python -m wind_data --station deception-bay
 ```
 
-Supported stations: `mountain-creek` (Sunshine Coast, effectively co-located with the Mooloolaba buoy).
+Supported stations: `mountain-creek` (Sunshine Coast, effectively co-located with the Mooloolaba buoy) and `deception-bay` (Moreton Bay, ~50 km south of Mooloolaba).
 
 ## Modelling
 
@@ -106,11 +110,7 @@ All scripts are plain `.py` files — run directly:
 
 | script | description |
 |--------|-------------|
-| `forecast_v2.py` | Full 2015-2025 history. Compares persistence, Ridge, HGB (direct + residual target), and a Ridge/HGB ensemble. Best: Ridge RMSE 0.265, skill +11.3%. |
-| `mooloolaba_brisbane_forecast.py` | Ridge + Lasso on the 2015-2025 Mooloolaba + Brisbane overlap window. |
 | `mooloolaba_brisbane_lstm.py` | LSTM on the same window. Convergence findings across several architecture configs documented in the script header (~25 min CPU per run). |
-| `mooloolaba_wind_forecast.py` | 2015-2024 window. Adds Mountain Creek (Sunshine Coast AWS) hourly wind to Mooloolaba features. Ridge + Lasso. Key finding: wind adds +3.9 pp skill over the wave-only Ridge baseline (RMSE 0.248, +12.9% vs persistence). |
-| `multi_buoy_forecast.py` | 2024-2025 window, all four neighbour buoys. Ridge + HGB. Key finding: neighbour buoys add ~+6 pp skill (RMSE 0.244, +19.5% vs persistence). |
 | `buoy_eda.py` | Multi-buoy EDA: coverage, distributions, seasonality, direction, cross-source correlation. |
 
 ## Results
@@ -132,8 +132,6 @@ All runs use a chronological 80/20 split. Skill score is vs. persistence on the 
 | Persistence (baseline) | Mooloolaba | 2024-2025 | 0.272 | — |
 | Ridge | Mooloolaba + 3 neighbours | 2024-2025 | 0.244 | +19.5% |
 | HGB | Mooloolaba + 3 neighbours | 2024-2025 | 0.258 | +10.0% |
-
-The LSTM row reflects the best of three logged configurations in `experiments.jsonl`; all three are well below persistence at this horizon. With raw circular-encoded channels and no engineered lag/momentum features, the model regresses hard toward the mean — see the discussion in `notebooks/forecast_v2.py`.
 
 The full set of logged runs is in `experiments.jsonl`.
 
@@ -178,7 +176,11 @@ Surf-Height-Prediction-2/
 
 **Package layout rationale.** `wave_data`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
 
-## Dataset schema
+## Data sources
+
+Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames.
+
+- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
 
 The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC):
 
@@ -193,13 +195,37 @@ The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records a
 
 Missing or erroneous readings (`-99.9` in raw files) are replaced with `NaN` and the index is resampled onto a gap-free 30-minute grid.
 
-## Data source
 
-Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames.
+- **Air-quality / meteorology AWS network.** Mountain Creek (2015–2024) — Sunshine Coast station at -26.69, 153.10, with a 10 m ultrasonic wind sensor. Deception Bay (2015–2024) — Moreton Bay station ~50 km south. Both carry the same 10 m wind schema. Pollutant fields are dropped at clean time; only `wind_dir_deg`, `wind_speed_ms`, and the two dispersion stats are kept.
 
-- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
-- **Air-quality / meteorology AWS network.** Mountain Creek (2015–2024) — Sunshine Coast station at -26.69, 153.10, with a 10 m ultrasonic wind sensor. Pollutant fields are dropped at clean time; only `wind_dir_deg`, `wind_speed_ms`, and the two dispersion stats are kept.
+
+Strategy
+--------
+Mountain Creek (Sunshine Coast Council AWS at -26.69, 153.10 — effectively
+co-located with the Mooloolaba wave buoy) carries hourly 10 m wind speed and
+direction back to 2015. The wave history is sliced to 2015-2024 to match the
+wind window — a separate persistence baseline is computed on that same window
+so skill scores are directly comparable to the wind-augmented runs (the
+existing 2015-2025 persistence row in experiments.jsonl is on a different
+test split).
+
+The wind frame is reindexed onto the 30-min wave grid by forward-fill: each
+30-min slot inherits the most recent past hourly reading (e.g. the 14:30
+slot gets the 14:00 wind value), which is strictly past-only.
+
+Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is
+sin/cos-encoded before being passed to add_neighbour_features — same pattern
+as the wave-buoy peak_dir_deg encoding in build_mooloolaba_features.
+
 
 ## License
 
 See [LICENSE](LICENSE).
+
+
+
+## todo
+  2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      
+  underfit there. Adding features like Hs² or interaction terms could help.                                                                                                
+  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then
+  exponentiating predictions) can reduce this regression-to-the-mean effect. 

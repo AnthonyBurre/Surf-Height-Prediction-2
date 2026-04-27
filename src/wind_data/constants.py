@@ -19,6 +19,18 @@ STATIONS: dict[str, dict[int, str]] = {
         2023: "474d80f7-f859-4d9f-8e20-f39c3fdf0800",
         2024: "f0199e4f-a10a-4f7a-9fb0-f1eedef674ad",
     },
+    "deception-bay": {
+        2015: "be0ba961-456e-451d-842d-d62fe7a85ae8",
+        2016: "16fc598d-6dae-4c5e-a69b-580f698530aa",
+        2017: "96de5878-0df8-4b8b-9153-70eb52152af9",
+        2018: "98f5b5bc-0c65-45ab-83a3-585d330d5632",
+        2019: "68cbb103-301b-47d5-ae2b-d81f56fc7c9c",
+        2020: "790c2a25-9400-431a-bc66-fd24ce30adab",
+        2021: "c003b168-40f5-4595-b580-4f4d1aa4c37f",
+        2022: "29603390-0a47-40dd-b4b8-97137cabcd3c",
+        2023: "a2d5dd4b-6e2a-410e-919c-3e589c8367bf",
+        2024: "533fb7e9-2238-4e3b-82d0-96162d975366",
+    },
 }
 
 # Backwards-compatible alias for the primary Mountain Creek station.

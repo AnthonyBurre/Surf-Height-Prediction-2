@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 import requests
 
+from wind_data.constants import STATIONS
 from wind_data.downloader import fetch_all, fetch_year_datastore
 from wind_data.pipeline import clean
 
@@ -152,6 +153,33 @@ def test_clean_coerces_string_numerics():
     df = clean(pd.DataFrame(records))
     assert df["wind_speed_ms"].dtype.kind == "f"
     assert df["wind_speed_ms"].iloc[0] == 1.5
+
+
+def test_clean_parses_ddmmyyyy_date_format():
+    # Some yearly resources (e.g. Mountain Creek 2019, Deception Bay 2015-2019)
+    # emit Date as DD/MM/YYYY rather than ISO. Without dayfirst handling, dates
+    # past the 12th of each month coerce to NaT and the year is silently lost.
+    records = [
+        {"Date": "01/03/2019", "Time": "12:00", "Wind Speed (m/s)": 2.0, "Wind Direction (degTN)": 90},
+        {"Date": "15/03/2019", "Time": "12:00", "Wind Speed (m/s)": 2.5, "Wind Direction (degTN)": 95},
+        {"Date": "31/03/2019", "Time": "12:00", "Wind Speed (m/s)": 3.0, "Wind Direction (degTN)": 100},
+    ]
+    df = clean(pd.DataFrame(records))
+    # All three day-first dates must round-trip (not just day ≤ 12). 12:00 AEST
+    # stays on the same calendar day after the UTC shift.
+    parsed_days = sorted({ts.day for ts in df.dropna(subset=["wind_speed_ms"]).index})
+    assert parsed_days == [1, 15, 31]
+
+
+def test_stations_registry_includes_both_stations():
+    # Smoke check that the multi-station registry is populated. Both Mountain
+    # Creek and Deception Bay should expose 10 years of CKAN UUIDs.
+    assert "mountain-creek" in STATIONS
+    assert "deception-bay" in STATIONS
+    for slug in ("mountain-creek", "deception-bay"):
+        years = STATIONS[slug]
+        assert len(years) >= 10
+        assert all(isinstance(rid, str) and len(rid) == 36 for rid in years.values())
 
 
 def test_clean_tolerates_missing_optional_columns():
