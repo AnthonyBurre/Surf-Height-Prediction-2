@@ -2,7 +2,7 @@
 
 ## Environment
 
-Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for all Python commands — do not call the system `python` or `pip`.
+Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for all Python commands — do not call the system `python3` or `pip`.
 
 ## Commands
 
@@ -21,4 +21,4 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 - **Skill score is always measured vs. `PersistenceForecaster`.** Persistence is tough to beat at this horizon (12h autocorrelation ≈ 0.8); seasonal-naive and climatology trail it and exist only as diagnostic floors.
 
-- **Experiment results go in `experiments.jsonl` at the repo root** — one JSON record per run with `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`. Use `forecast.evaluate_and_log(...)` (drop-in replacement for `evaluate`) or `forecast.log_run(result, ...)` for results computed outside the harness; `forecast.read_log()` returns the file as a DataFrame in one line. The file is committed; `git_sha` (with a `-dirty` suffix when the working tree is dirty) makes any row reproducible by checkout.
+- **Experiment results go in `experiments.jsonl` at the repo root** — Use `forecast.evaluate_and_log(...)` (drop-in replacement for `evaluate`) or `forecast.log_run(result, ...)` for results computed outside the harness; `forecast.read_log()` returns the file as a DataFrame in one line.
