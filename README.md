@@ -1,4 +1,4 @@
-# Surf-Height-Prediction-2
+# Surf Height Prediction 2
 
 Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys (Brisbane, Caloundra, Gold Coast, North Moreton Bay) are used as additional input features where their histories overlap.
 
@@ -178,7 +178,7 @@ Surf-Height-Prediction-2/
 
 ## Data sources
 
-Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames.
+Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation
 
 - **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
 
