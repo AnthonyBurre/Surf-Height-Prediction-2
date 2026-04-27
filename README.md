@@ -198,9 +198,6 @@ Missing or erroneous readings (`-99.9` in raw files) are replaced with `NaN` and
 
 - **Air-quality / meteorology AWS network.** Mountain Creek (2015–2024) — Sunshine Coast station at -26.69, 153.10, with a 10 m ultrasonic wind sensor. Deception Bay (2015–2024) — Moreton Bay station ~50 km south. Both carry the same 10 m wind schema. Pollutant fields are dropped at clean time; only `wind_dir_deg`, `wind_speed_ms`, and the two dispersion stats are kept.
 
-
-Strategy
---------
 Mountain Creek (Sunshine Coast Council AWS at -26.69, 153.10 — effectively
 co-located with the Mooloolaba wave buoy) carries hourly 10 m wind speed and
 direction back to 2015. The wave history is sliced to 2015-2024 to match the
