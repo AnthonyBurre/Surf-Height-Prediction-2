@@ -76,8 +76,8 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 CONFIG: dict = {
     # --- data ---
     "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
-    "neighbours":    [],          # subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
-    "wind_stations": ["mountain-creek"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
+    "neighbours":    ["brisbane"],          # subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
+    "wind_stations": ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- features ---
     # "raw"        — circular-encoded raw channels + sin/cos time features
@@ -87,7 +87,7 @@ CONFIG: dict = {
     "feature_mode": "raw",
 
     # --- model ---
-    "model":         "gru",       # "lstm", "gru", "rnn", "tcn"
+    "model":         "lstm",       # "lstm", "gru", "rnn", "tcn"
 
     # shared seq-model hyperparams
     "seq_len":       48,          # 48 × 30 min = 24 h of context
