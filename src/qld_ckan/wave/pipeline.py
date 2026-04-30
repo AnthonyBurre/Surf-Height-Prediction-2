@@ -4,15 +4,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .. import unify_frames
 from .constants import BUOYS, COLUMN_RENAME_MAP, RESOURCE_IDS, SENTINEL_VALUE
 from .downloader import fetch_all
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path(__file__).parents[2] / "data"
-
-# Backwards-compatible default for callers that used the old positional output_path default.
-_DEFAULT_OUTPUT = _DATA_DIR / "mooloolaba_wave_data_2015-2025.csv"
+_DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
 # localising to Australia/Brisbane attaches the correct offset before we
@@ -29,10 +27,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
     Columns are already standardised per-year by the downloader; no further
     cleaning has been applied. Pass the result to ``clean()``.
     """
-    frames = fetch_all(resource_ids)
-    if not frames:
-        raise ValueError("No data was downloaded; cannot build unified dataset.")
-    return pd.concat(frames, ignore_index=True)
+    return unify_frames(fetch_all(resource_ids))
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:

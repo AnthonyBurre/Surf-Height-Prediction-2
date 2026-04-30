@@ -31,7 +31,16 @@ from .config import (
     SAMPLING_FREQ_MINUTES,
     TARGET_COL,
 )
-from .data import chronological_split, load_data, make_target
+from .data import (
+    NEIGHBOUR_FILES,
+    WIND_FILES,
+    chronological_split,
+    load_data,
+    load_neighbours,
+    load_wind,
+    make_target,
+    restrict_to_overlap,
+)
 from .evaluate import EvaluationResult, compare, evaluate
 from .experiments import evaluate_and_log, log_run, read_log
 from .features import (
@@ -40,7 +49,6 @@ from .features import (
     add_momentum,
     add_neighbour_features,
     add_rolling_features,
-    add_time_features,
     build_mooloolaba_features,
     build_seq_features,
     encode_circular,
@@ -70,16 +78,20 @@ __all__ = [
     "SAMPLING_FREQ_MINUTES",
     "TARGET_COL",
     # data
+    "NEIGHBOUR_FILES",
+    "WIND_FILES",
     "chronological_split",
     "load_data",
+    "load_neighbours",
+    "load_wind",
     "make_target",
+    "restrict_to_overlap",
     # features
     "FeatureConfig",
     "add_lag_features",
     "add_momentum",
     "add_neighbour_features",
     "add_rolling_features",
-    "add_time_features",
     "build_mooloolaba_features",
     "build_seq_features",
     "encode_circular",

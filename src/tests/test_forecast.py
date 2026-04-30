@@ -9,7 +9,6 @@ from forecast import (
     SeasonalNaiveForecaster,
     add_lag_features,
     add_rolling_features,
-    add_time_features,
     bias,
     chronological_split,
     compare,
@@ -157,15 +156,24 @@ def test_add_rolling_features_rejects_unknown_stat():
         add_rolling_features(df, columns=["hsig_m"], windows=[4], stats=("zscore",))
 
 
-def test_add_time_features_cyclical_bounds():
+def test_encode_circular_hour_virtual_loops_after_24h():
     # 49 rows of 30-min data covers 24h plus the next 00:00 timestamp.
     df = _synthetic_df(49)
-    out = add_time_features(df)
+    out = encode_circular(df, periods={"hour": 24.0})
     assert ((out["hour_sin"] >= -1.0) & (out["hour_sin"] <= 1.0)).all()
     assert ((out["hour_cos"] >= -1.0) & (out["hour_cos"] <= 1.0)).all()
     # Over a full day the sin/cos trace should loop back to the starting value.
     assert out["hour_sin"].iloc[0] == pytest.approx(out["hour_sin"].iloc[48], abs=1e-9)
     assert out["hour_cos"].iloc[0] == pytest.approx(out["hour_cos"].iloc[48], abs=1e-9)
+
+
+def test_encode_circular_doy_virtual_does_not_drop_data_columns():
+    df = _synthetic_df(10)
+    out = encode_circular(df, periods={"doy": 365.25})
+    # Virtual names are added; nothing is dropped.
+    assert "doy_sin" in out.columns
+    assert "doy_cos" in out.columns
+    assert set(df.columns) <= set(out.columns)
 
 
 def test_encode_circular_replaces_original_column():
@@ -184,6 +192,12 @@ def test_encode_circular_handles_360_equals_0():
     out = encode_circular(df)
     assert out["peak_dir_deg_sin"].iloc[0] == pytest.approx(out["peak_dir_deg_sin"].iloc[1])
     assert out["peak_dir_deg_cos"].iloc[0] == pytest.approx(out["peak_dir_deg_cos"].iloc[1])
+
+
+def test_encode_circular_rejects_unknown_name():
+    df = _synthetic_df(5)
+    with pytest.raises(ValueError, match="not in df.columns"):
+        encode_circular(df, periods={"not_a_column": 1.0})
 
 
 # ---------------------------------------------------------------------------

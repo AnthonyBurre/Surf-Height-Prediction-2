@@ -54,20 +54,16 @@ Tips
 
 import time
 import warnings
-from pathlib import Path
 
 import pandas as pd
 import torch
 from sklearn.impute import SimpleImputer
 
 import forecast as fc
-from forecast.features import encode_circular
 from forecast.metrics import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
-
-DATA_DIR = Path(__file__).parent.parent / "data"
 
 # ---------------------------------------------------------------------------
 # CONFIG — edit me
@@ -93,7 +89,7 @@ CONFIG: dict = {
     "seq_len":       48,          # 48 × 30 min = 24 h of context
     "hidden":        96,
     "num_layers":    2,
-    "epochs":        15,
+    "epochs":        10,
     "batch_size":    512,
     "lr":            1e-3,
     "seed":          42,
@@ -115,18 +111,6 @@ CONFIG: dict = {
 # Internals — generally no need to touch below this line
 # ---------------------------------------------------------------------------
 
-_NEIGHBOUR_FILES = {
-    "brisbane":          "brisbane_wave_data_2015-2025.csv",
-    "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
-    "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
-}
-
-_WIND_FILES = {
-    "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
-    "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
-}
-
 
 def auto_device(preferred: str | None) -> str:
     if preferred:
@@ -141,42 +125,6 @@ def auto_device(preferred: str | None) -> str:
 def load_wave(year_max: int) -> pd.DataFrame:
     df = fc.load_data()
     return df.loc[df.index.year <= year_max]
-
-
-def load_neighbours(target_index: pd.DatetimeIndex, neighbours: list[str]) -> dict[str, pd.Series]:
-    out: dict[str, pd.Series] = {}
-    for name in neighbours:
-        if name not in _NEIGHBOUR_FILES:
-            raise ValueError(f"Unknown neighbour {name!r}; supported: {list(_NEIGHBOUR_FILES)}")
-        nb = pd.read_csv(
-            DATA_DIR / _NEIGHBOUR_FILES[name],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
-        )
-        out[name] = nb["hsig_m"].reindex(target_index)
-    return out
-
-
-def load_wind(target_index: pd.DatetimeIndex,
-              stations: list[str]) -> pd.DataFrame | None:
-    """Hourly wind for one or more stations, sin/cos-encoded, ffill'd to 30-min grid.
-
-    Returns None if no stations are requested. Multi-station loads namespace
-    each station's columns by slug (e.g. ``deception-bay_wind_speed_ms``).
-    """
-    if not stations:
-        return None
-    frames: list[pd.DataFrame] = []
-    for s in stations:
-        if s not in _WIND_FILES:
-            raise ValueError(f"Unknown wind station {s!r}; supported: {list(_WIND_FILES)}")
-        w = pd.read_csv(
-            DATA_DIR / _WIND_FILES[s],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
-        )
-        w = encode_circular(w, columns=["wind_dir_deg"])
-        w = w.add_prefix(f"{s}_")
-        frames.append(w.reindex(target_index, method="ffill"))
-    return pd.concat(frames, axis=1)
 
 
 def build_features(
@@ -250,16 +198,11 @@ def main() -> None:
     print(f"device         : {device}")
 
     wave = load_wave(cfg["year_max"])
-    neighbours = load_neighbours(wave.index, cfg["neighbours"])
-    wind = load_wind(wave.index, cfg["wind_stations"])
+    neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
+    wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
     # Restrict to wind overlap when wind is in play, so every training row has wind.
-    if wind is not None:
-        valid = wind.dropna(how="all")
-        start, end = valid.index.min(), valid.index.max()
-        wave = wave.loc[start:end]
-        neighbours = {k: v.loc[start:end] for k, v in neighbours.items()}
-        wind = wind.loc[start:end]
+    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
 
     X = build_features(wave, neighbours, wind, cfg["feature_mode"])
     y = fc.make_target(wave)

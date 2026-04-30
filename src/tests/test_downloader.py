@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 import requests
 
-from wave_data.downloader import _normalize_columns, _session, fetch_all, fetch_year_datastore
+from qld_ckan.wave.downloader import _normalize_columns, _session, fetch_all, fetch_year_datastore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,7 +123,7 @@ def test_fetch_year_datastore_strips_unit_suffixes():
 
 
 def test_fetch_year_datastore_paginates_when_total_exceeds_batch():
-    from wave_data.downloader import _DATASTORE_BATCH
+    from qld_ckan.wave.downloader import _DATASTORE_BATCH
 
     page1 = _RECORDS_MID_ERA
     page2 = [{"_id": 3, "Date/Time": "2017-01-01T01:00:00", "Hs": 1.20, "Hmax": 2.00,
@@ -154,7 +154,7 @@ def test_fetch_year_datastore_raises_on_http_error():
 
 def test_fetch_all_returns_one_frame_per_resource_id():
     resource_ids = {2015: "rid-2015", 2017: "rid-2017"}
-    with patch("wave_data.downloader.fetch_year_datastore", return_value=pd.DataFrame()) as mock_ds:
+    with patch("qld_ckan.wave.downloader.fetch_year_datastore", return_value=pd.DataFrame()) as mock_ds:
         frames = fetch_all(resource_ids=resource_ids)
     assert mock_ds.call_count == 2
     assert len(frames) == 2
@@ -168,7 +168,7 @@ def test_fetch_all_skips_404():
             raise requests.exceptions.HTTPError(response=MagicMock(status_code=404))
         return pd.DataFrame(_RECORDS_MID_ERA)
 
-    with patch("wave_data.downloader.fetch_year_datastore", side_effect=side_effect):
+    with patch("qld_ckan.wave.downloader.fetch_year_datastore", side_effect=side_effect):
         frames = fetch_all(resource_ids=resource_ids)
 
     assert len(frames) == 1
@@ -176,7 +176,7 @@ def test_fetch_all_skips_404():
 
 def test_fetch_all_reraises_non_404_errors():
     resource_ids = {2017: "rid-2017"}
-    with patch("wave_data.downloader.fetch_year_datastore",
+    with patch("qld_ckan.wave.downloader.fetch_year_datastore",
                side_effect=requests.exceptions.HTTPError(response=MagicMock(status_code=500))):
         with pytest.raises(requests.exceptions.HTTPError):
             fetch_all(resource_ids=resource_ids)
@@ -184,7 +184,7 @@ def test_fetch_all_reraises_non_404_errors():
 
 def test_fetch_all_returns_empty_list_when_all_404():
     resource_ids = {2017: "rid-missing"}
-    with patch("wave_data.downloader.fetch_year_datastore",
+    with patch("qld_ckan.wave.downloader.fetch_year_datastore",
                side_effect=requests.exceptions.HTTPError(response=MagicMock(status_code=404))):
         frames = fetch_all(resource_ids=resource_ids)
     assert frames == []

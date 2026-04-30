@@ -28,7 +28,7 @@ FIG_DIR  = Path(__file__).parent / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
 # Registry of available wind stations and the CSV each was downloaded to via
-# `python -m wind_data --station <slug>`. Add new stations here once their CSV
+# `python -m qld_ckan wind --station <slug>`. Add new stations here once their CSV
 # has been produced.
 WIND_FILES = {
     "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
@@ -145,7 +145,7 @@ def plot_autocorrelation(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> 
 def plot_feature_horizon(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> None:
     df = aligned_hourly(wave, winds)
 
-    df = encode_circular(df, columns=["peak_dir_deg"])
+    df = encode_circular(df, periods={"peak_dir_deg": 360.0})
     for name in winds:
         col = f"{name}_wind_dir_deg"
         df[f"{name}_wind_dir_sin"] = np.sin(2 * np.pi * df[col] / 360.0)

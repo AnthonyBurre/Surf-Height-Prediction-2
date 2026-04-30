@@ -2,10 +2,9 @@
 
 Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys (Brisbane, Caloundra, Gold Coast, North Moreton Bay) are used as additional input features where their histories overlap.
 
-Four installed Python packages back it:
+Three installed Python packages back it:
 
-- **`wave_data`** — ETL. Downloads per-buoy yearly records from the CKAN Datastore API, unifies schema, and writes a cleaned CSV on a 30-minute grid.
-- **`wind_data`** - ETL.
+- **`qld_ckan`** — ETL. Downloads yearly records from the QLD Government CKAN Datastore API, unifies schema, and writes a cleaned CSV on a per-source grid. Two sub-packages: `qld_ckan.wave` (wave-buoy network, 30-minute grid) and `qld_ckan.wind` (AWS station 10 m wind, hourly grid). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
 - **`viz`** — source-agnostic plotting. Time series (incl. multi-source overlays), correlation heatmaps (feature × horizon, lookback × horizon, cross-source), and model-comparison / residual-analysis diagnostics.
 - **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
 
@@ -31,28 +30,26 @@ The `data/` directory is gitignored — populate it by running the pipeline.
 
 ## Running the pipeline
 
-Download, clean, and export a unified CSV (a few minutes over the CKAN Datastore API):
+`qld_ckan` exposes one CLI with two subcommands — `wave` for the buoy network, `wind` for the AWS stations. Each writes a cleaned CSV to `data/`.
 
 ```bash
 # Default: Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
-./.venv/bin/python -m wave_data
+./.venv/bin/python -m qld_ckan wave
 
 # Any supported buoy
-./.venv/bin/python -m wave_data --buoy brisbane
-./.venv/bin/python -m wave_data --buoy caloundra
+./.venv/bin/python -m qld_ckan wave --buoy brisbane
+./.venv/bin/python -m qld_ckan wave --buoy caloundra
 ```
 
 Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-moreton-bay`.
 
-A parallel `wind_data` package fetches hourly 10 m wind from QLD AWS stations on the same CKAN portal:
-
 ```bash
 # Default: Mountain Creek 2015-2024 → data/mountain-creek_wind_data_2015-2024.csv
-./.venv/bin/python -m wind_data
+./.venv/bin/python -m qld_ckan wind
 
 # Any supported station
-./.venv/bin/python -m wind_data --station mountain-creek
-./.venv/bin/python -m wind_data --station deception-bay
+./.venv/bin/python -m qld_ckan wind --station mountain-creek
+./.venv/bin/python -m qld_ckan wind --station deception-bay
 ```
 
 Supported stations: `mountain-creek` (Sunshine Coast, effectively co-located with the Mooloolaba buoy) and `deception-bay` (Moreton Bay, ~50 km south of Mooloolaba).
@@ -148,14 +145,20 @@ Network calls are mocked, so tests run offline.
 ```
 Surf-Height-Prediction-2/
 ├── src/
-│   ├── wave_data/              # ETL package
-│   │   ├── __main__.py         # `python -m wave_data [--buoy NAME]` entry point
-│   │   ├── constants.py        # CKAN resource IDs per buoy per year
-│   │   ├── downloader.py       # per-year CKAN Datastore fetch + schema normalisation
-│   │   └── pipeline.py         # unify / clean / export CSV
+│   ├── qld_ckan/               # ETL package — QLD CKAN Datastore client
+│   │   ├── __init__.py         # session, paginate_records, fetch_all_years, unify_frames
+│   │   ├── __main__.py         # `python -m qld_ckan {wave,wind} [...]` entry point
+│   │   ├── wave/               # wave-buoy network (30-min grid)
+│   │   │   ├── constants.py    # CKAN resource IDs per buoy per year
+│   │   │   ├── downloader.py   # per-year fetch + pre-2017 column normalisation
+│   │   │   └── pipeline.py     # unify / clean / export CSV
+│   │   └── wind/               # AWS station 10 m wind (hourly grid)
+│   │       ├── constants.py
+│   │       ├── downloader.py
+│   │       └── pipeline.py
 │   ├── forecast/               # modelling package
 │   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
-│   │   ├── data.py             # load_data, make_target, chronological_split
+│   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
 │   │   ├── features.py         # FeatureConfig, build_mooloolaba_features, add_neighbour_features, build_seq_features
 │   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
 │   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
@@ -168,13 +171,13 @@ Surf-Height-Prediction-2/
 │   │   └── diagnostics.py      # rmse_bar, residual_timeseries, residual_by_bin
 │   └── tests/                  # pytest suite (network-mocked)
 ├── notebooks/                  # experiment scripts
-├── data/                       # gitignored — generated by `python -m wave_data`
+├── data/                       # gitignored — generated by `python -m qld_ckan {wave,wind}`
 ├── experiments.jsonl           # append-only run log (committed)
 ├── pyproject.toml
 └── requirements.txt            # pinned env (regen: pip freeze > requirements.txt)
 ```
 
-**Package layout rationale.** `wave_data`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
+**Package layout rationale.** `qld_ckan`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
 
 ## Data sources
 
@@ -226,3 +229,34 @@ See [LICENSE](LICENSE).
   underfit there. Adding features like Hs² or interaction terms could help.                                                                                                
   3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then
   exponentiating predictions) can reduce this regression-to-the-mean effect. 
+
+    Big-leverage modelling changes
+
+  1. Train sequence models on the persistence residual, not the absolute target. The LSTM/GRU/RNN runs in experiments.jsonl all sit between −35% and −75% skill — they're  
+  worse than just calling tomorrow == today. The HGB residual-target trick in notebooks/linear_playground.py:282 already exists; lift it into
+  _TorchSeqForecaster.fit/predict (src/forecast/neural.py:81). The model then has to learn 0 by default, can't lose to persistence catastrophically, and gets all of its   
+  capacity to model the delta. This single change typically explains ~80% of "neural net underperforms persistence" pain.
+  2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
+  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  
+  have a publishable model.
+  3. Log/asinh-transform the target. Bias is +0.018 m on the best Ridge but the README todo already suspects it's concentrated at high tail (regression-to-mean). Fit      
+  np.log1p(hsig) or np.arcsinh(hsig/H₀), exponentiate at predict time. Easy and almost always wins on big-day RMSE without hurting the bulk.                               
+  4. Physics features the linear models can't discover on their own.
+    - Wave power proxy H² · T (one column).                                                                                                                                
+    - Swell × wind alignment: wind_speed · cos(wind_dir − peak_dir) — onshore vs offshore makes/breaks surf, and it's a multiplicative interaction Ridge can't recover.    
+    - tp / wind_speed as a wind-sea vs groundswell separator.                                                                                                              
+  These three columns alone often add ~3–5% skill at our scale.                                                                                                            
+  5. Multi-horizon forecasts are where you actually beat persistence. At 12h the autocorr is 0.81 — persistence is brutal. At 24/48/72h it collapses. A single-output      
+  direct forecaster at h=12 sells the model short. HORIZON_STEPS in forecast/config.py:11 is centralised (good), but the pipeline only fits one h. Either loop over        
+  horizons or use a MultiOutputRegressor — the API on Ridge/HGB is one line. This is the change that would make the project read as "a surf forecast model" rather than "a 
+  +12h hsig regressor".                                                                                                                                                    
+  6. Honest test harness. A single 80/20 split means the "test set" is implicitly used during model selection across the 42 logged runs. Hold out the last 6 months as a
+  true blind set, OR move to an expanding-window CV (sklearn TimeSeriesSplit) for hyperparameter selection. Right now skill comparisons across experiments.jsonl rows      
+  aren't statistically clean.
+
+
+    7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
+  significant wave height"), but I'd at least:              
+    - Forecast tp_s and peak_dir_deg jointly (multi-output) so downstream code can run a break-specific transform.                                                         
+    - Add partitioned swell — sea vs primary vs secondary — if any of the QLD or BOM resources expose it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, 
+  ~25km grid) is the highest-ROI external data add. Bimodal swells will never fit a single hsig number.  

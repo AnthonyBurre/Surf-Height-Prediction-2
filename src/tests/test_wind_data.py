@@ -4,9 +4,9 @@ import pandas as pd
 import pytest
 import requests
 
-from wind_data.constants import STATIONS
-from wind_data.downloader import fetch_all, fetch_year_datastore
-from wind_data.pipeline import clean
+from qld_ckan.wind.constants import STATIONS
+from qld_ckan.wind.downloader import fetch_all, fetch_year_datastore
+from qld_ckan.wind.pipeline import clean
 
 
 def _datastore_response(records: list[dict], total: int | None = None) -> MagicMock:
@@ -53,7 +53,7 @@ _RAW_RECORDS = [
 
 
 def test_fetch_year_drops_id_column():
-    with patch("wind_data.downloader._session") as mock_session:
+    with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.return_value = _datastore_response(_RAW_RECORDS)
         df = fetch_year_datastore(2024, "rid")
     assert "_id" not in df.columns
@@ -63,7 +63,7 @@ def test_fetch_year_drops_id_column():
 def test_fetch_year_paginates_until_total_reached():
     page1 = _datastore_response(_RAW_RECORDS[:1], total=2)
     page2 = _datastore_response(_RAW_RECORDS[1:], total=2)
-    with patch("wind_data.downloader._session") as mock_session:
+    with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.side_effect = [page1, page2]
         df = fetch_year_datastore(2024, "rid")
     assert len(df) == 2
@@ -84,7 +84,7 @@ def test_fetch_all_skips_404():
         mock.raise_for_status.side_effect = http_error
         return mock
 
-    with patch("wind_data.downloader._session") as mock_session:
+    with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.side_effect = _get
         frames = fetch_all({2099: "missing"})
     assert frames == []
@@ -99,7 +99,7 @@ def test_fetch_all_reraises_non_404():
         mock.raise_for_status.side_effect = http_error
         return mock
 
-    with patch("wind_data.downloader._session") as mock_session:
+    with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.side_effect = _get
         with pytest.raises(requests.exceptions.HTTPError):
             fetch_all({2024: "rid"})

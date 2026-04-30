@@ -1,5 +1,3 @@
-CKAN_API_BASE = "https://www.data.qld.gov.au/api/3/action"
-
 # All years are served via the CKAN Datastore API. Resource IDs are stable
 # even when the portal renames or replaces the underlying file.
 #

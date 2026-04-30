@@ -3,16 +3,17 @@ from pathlib import Path
 
 import pandas as pd
 
+from .. import unify_frames
 from .constants import COLUMN_RENAME_MAP, RESOURCE_IDS, STATIONS
 from .downloader import fetch_all
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path(__file__).parents[2] / "data"
+_DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
 # localising to Australia/Brisbane attaches the correct offset before we
-# convert to UTC for storage. This matches the wave_data convention so the
+# convert to UTC for storage. This matches the wave-side convention so the
 # two frames join on a shared UTC index without any timezone fiddling.
 _SOURCE_TZ = "Australia/Brisbane"
 _SAMPLING_FREQ = "1h"
@@ -24,10 +25,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
     Raw columns are preserved; pass the result to ``clean()`` to get the
     standardised, time-indexed frame.
     """
-    frames = fetch_all(resource_ids)
-    if not frames:
-        raise ValueError("No data was downloaded; cannot build unified dataset.")
-    return pd.concat(frames, ignore_index=True)
+    return unify_frames(fetch_all(resource_ids))
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:

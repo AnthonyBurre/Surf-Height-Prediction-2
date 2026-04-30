@@ -6,7 +6,7 @@ Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for 
 
 ## Commands
 
-- `./.venv/bin/python -m wave_data [--buoy NAME]` — downloads and saves a buoy CSV to `data/{buoy}_wave_data_{years}.csv`. Package is installed editable (`pip install -e .`), so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named wave_data`, re-run `./.venv/bin/pip install -e .`.
+- `./.venv/bin/python -m qld_ckan wave [--buoy NAME]` — downloads and saves a buoy CSV to `data/{buoy}_wave_data_{years}.csv`. The wind sub-command is `python -m qld_ckan wind [--station NAME]` → `data/{station}_wind_data_{years}.csv`. Package is installed editable (`pip install -e .`), so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named qld_ckan`, re-run `./.venv/bin/pip install -e .`.
 - `./.venv/bin/pytest src/tests/ -v` — pytest rootdir discovery + `src/tests/__init__.py` handle path resolution.
 
 ## Non-obvious points

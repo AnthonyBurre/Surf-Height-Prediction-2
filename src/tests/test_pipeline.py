@@ -4,7 +4,27 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from wave_data.pipeline import clean, run, unify
+from qld_ckan import unify_frames
+from qld_ckan.wave.pipeline import clean, run, unify
+
+
+# ---------------------------------------------------------------------------
+# qld_ckan.unify_frames — shared helper exercised through the wave wrapper
+# elsewhere; covered directly here so future sources don't have to.
+# ---------------------------------------------------------------------------
+
+
+def test_unify_frames_concatenates_with_reset_index():
+    a = pd.DataFrame({"x": [1, 2]})
+    b = pd.DataFrame({"x": [3]})
+    out = unify_frames([a, b])
+    assert list(out["x"]) == [1, 2, 3]
+    assert list(out.index) == [0, 1, 2]
+
+
+def test_unify_frames_raises_on_empty_list():
+    with pytest.raises(ValueError, match="No data was downloaded"):
+        unify_frames([])
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,7 +183,7 @@ def test_unify_concatenates_frames_from_fetch_all():
         "Tp": 9.50, "Peak Direction": 100.0, "SST": 26.0,
     }])
 
-    with patch("wave_data.pipeline.fetch_all", return_value=[frame_a, frame_b]):
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[frame_a, frame_b]):
         result = unify()
 
     assert len(result) == 3
@@ -172,13 +192,13 @@ def test_unify_concatenates_frames_from_fetch_all():
 
 def test_unify_resets_index():
     frame = _raw_frame(_standard_rows())
-    with patch("wave_data.pipeline.fetch_all", return_value=[frame, frame]):
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[frame, frame]):
         result = unify()
     assert list(result.index) == list(range(len(result)))
 
 
 def test_unify_raises_when_no_data_downloaded():
-    with patch("wave_data.pipeline.fetch_all", return_value=[]):
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[]):
         with pytest.raises(ValueError, match="No data was downloaded"):
             unify()
 
@@ -187,7 +207,7 @@ def test_unify_passes_custom_resource_ids_to_fetch_all():
     custom_ids = {2020: "fake-resource-id"}
     frame = _raw_frame(_standard_rows())
 
-    with patch("wave_data.pipeline.fetch_all", return_value=[frame]) as mock_fetch:
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[frame]) as mock_fetch:
         unify(resource_ids=custom_ids)
 
     mock_fetch.assert_called_once_with(custom_ids)
@@ -202,7 +222,7 @@ def test_run_writes_csv_and_creates_parent_dir(tmp_path):
     output = tmp_path / "nested" / "out.csv"
     frame = _raw_frame(_standard_rows())
 
-    with patch("wave_data.pipeline.fetch_all", return_value=[frame]):
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[frame]):
         result = run(output_path=output)
 
     assert output.exists()
@@ -217,7 +237,7 @@ def test_run_accepts_string_output_path(tmp_path):
     output = str(tmp_path / "out.csv")
     frame = _raw_frame(_standard_rows())
 
-    with patch("wave_data.pipeline.fetch_all", return_value=[frame]):
+    with patch("qld_ckan.wave.pipeline.fetch_all", return_value=[frame]):
         run(output_path=output)
 
     assert (tmp_path / "out.csv").exists()
