@@ -1,4 +1,10 @@
-"""Time-series plots. Single-source and multi-source overlays share the same API."""
+"""Time-series plots — shared primitives for any time-indexed series.
+
+These functions are deliberately context-free: they work equally well on
+a raw downloaded channel (post-download EDA) and on a model's prediction
+or residual series (post-modeling diagnostics). Single-source and multi-
+source overlays share the same API.
+"""
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

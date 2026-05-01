@@ -1,7 +1,8 @@
-"""Model-comparison and residual-analysis plots.
+"""Post-modeling diagnostics — model comparison and residual analysis.
 
 Accepts ``EvaluationResult`` objects directly (from ``forecast.evaluate``)
-so plots stay in sync with the harness that produced them.
+so plots stay in sync with the harness that produced them. Reach for
+this module *after* a model has been trained and scored.
 """
 from typing import Any, Protocol
 

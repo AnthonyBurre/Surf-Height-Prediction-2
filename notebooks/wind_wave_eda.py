@@ -2,11 +2,10 @@
 
 Run:  ./.venv/bin/python notebooks/wind_wave_eda.py
 
-Saves seven PNGs to notebooks/figures/:
+Saves six PNGs to notebooks/figures/:
   wind_wave_timeseries.png       — 3-panel: hsig_m, wind_speed_ms (overlaid stations), tp_s over 2020
   autocorrelation_curves.png     — ACF for wave channels and wind speed (per station)
   wind_wave_feature_horizon.png  — corr(wave+wind features at t, hsig_m at t+h) heatmap
-  hsig_lookback_horizon.png      — corr(hsig_m at t-lookback, hsig_m at t+h) heatmap
   direction_roses.png            — wind direction rose per station + swell peak direction rose
   wind_wave_joint.png            — hexbin: wind speed vs wave height and wave period (primary station)
   wind_station_comparison.png    — overlaid time series + hexbin between the two stations
@@ -186,27 +185,7 @@ def plot_feature_horizon(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Figure 4 — Lookback × horizon heatmap for hsig_m
-# --------------------------------------------------------------------------- #
-def plot_lookback_horizon(wave: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax, grid = viz.lookback_horizon_heatmap(
-        wave["hsig_m"].dropna(),
-        lookbacks_h=(0, 0.5, 1, 3, 6, 12, 24, 48),
-        horizons_h=(0, 1, 3, 6, 12, 24, 48, 72),
-        sampling_freq_min=30,
-        source_label="Mooloolaba hsig_m",
-        ax=ax,
-    )
-    fig.tight_layout()
-    out = FIG_DIR / "hsig_lookback_horizon.png"
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-    print(f"Saved {out.name}")
-
-
-# --------------------------------------------------------------------------- #
-# Figure 5 — Direction roses: one wind rose per station + swell rose
+# Figure 4 — Direction roses: one wind rose per station + swell rose
 # --------------------------------------------------------------------------- #
 def plot_direction_roses(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> None:
     bin_edges = np.linspace(0, 2 * np.pi, 37)   # 10° bins
@@ -242,7 +221,7 @@ def plot_direction_roses(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Figure 6 — Wind-wave joint distributions (primary station only)
+# Figure 5 — Wind-wave joint distributions (primary station only)
 # --------------------------------------------------------------------------- #
 def plot_wind_wave_joint(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> None:
     primary = next(iter(winds))
@@ -279,7 +258,7 @@ def plot_wind_wave_joint(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Figure 7 — Cross-station comparison (overlaid time series + hexbin)
+# Figure 6 — Cross-station comparison (overlaid time series + hexbin)
 # --------------------------------------------------------------------------- #
 def plot_station_comparison(winds: dict[str, pd.DataFrame]) -> None:
     if len(winds) < 2:
@@ -338,16 +317,13 @@ def main() -> None:
     print("\n--- Figure 3: feature × horizon heatmap ---")
     plot_feature_horizon(wave, winds)
 
-    print("\n--- Figure 4: hsig_m lookback × horizon heatmap ---")
-    plot_lookback_horizon(wave)
-
-    print("\n--- Figure 5: direction roses ---")
+    print("\n--- Figure 4: direction roses ---")
     plot_direction_roses(wave, winds)
 
-    print("\n--- Figure 6: wind-wave joint distributions ---")
+    print("\n--- Figure 5: wind-wave joint distributions ---")
     plot_wind_wave_joint(wave, winds)
 
-    print("\n--- Figure 7: station comparison ---")
+    print("\n--- Figure 6: station comparison ---")
     plot_station_comparison(winds)
 
     print(f"\nAll figures saved to {FIG_DIR}/")

@@ -1,12 +1,12 @@
-"""Correlation-structure heatmaps.
+"""Post-download exploratory plots.
 
-Three use-cases, each with its own function:
+Charts that only make sense *before* a forecasting model exists — used to
+screen candidate features and decide which neighbour sources are worth
+pulling in:
 
 1. ``feature_horizon_heatmap``  — *within one source*: how each channel
    correlates with a target at a range of forecast horizons.
-2. ``lookback_horizon_heatmap`` — *within one source*: how a single
-   variable at t − lookback correlates with itself at t + horizon.
-3. ``cross_source_correlation`` — *across sources*: how the same
+2. ``cross_source_correlation`` — *across sources*: how the same
    variable correlates across multiple buoys / products at a given lag.
 """
 import matplotlib.pyplot as plt
@@ -65,54 +65,6 @@ def feature_horizon_heatmap(
     if source_label:
         title = f"{title} — {source_label}"
     ax.set(title=title, xlabel="Forecast horizon", ylabel="")
-    return ax, grid
-
-
-def lookback_horizon_heatmap(
-    series: pd.Series,
-    *,
-    lookbacks_h: tuple[float, ...] = (0, 0.5, 1, 3, 6, 12, 24, 48),
-    horizons_h: tuple[int, ...] = (0, 1, 3, 6, 12, 24, 48, 72),
-    sampling_freq_min: int = 30,
-    source_label: str | None = None,
-    ax: Axes | None = None,
-) -> tuple[Axes, pd.DataFrame]:
-    """corr(series at t−lookback, series at t+horizon).
-
-    Answers "does more history help at this horizon?" at a glance. A
-    column that falls off sharply as you go down the rows means there
-    is no useful information beyond the freshest observation.
-    """
-    lb_labels = ["now" if lb == 0 else f"{lb}h ago" for lb in lookbacks_h]
-    grid = pd.DataFrame(
-        index=lb_labels,
-        columns=[f"+{h}h" for h in horizons_h],
-        dtype=float,
-    )
-    for lb, label in zip(lookbacks_h, lb_labels):
-        past = series.shift(_steps(lb, sampling_freq_min))
-        for h in horizons_h:
-            future = series.shift(-_steps(h, sampling_freq_min))
-            grid.loc[label, f"+{h}h"] = past.corr(future)
-
-    if ax is None:
-        _, ax = plt.subplots(figsize=(11, 5))
-    sns.heatmap(
-        grid,
-        annot=True,
-        fmt=".2f",
-        cmap="RdBu_r",
-        center=0,
-        vmin=-1,
-        vmax=1,
-        cbar_kws={"label": "Pearson r"},
-        ax=ax,
-    )
-    name = series.name or "series"
-    title = f"corr({name} at t−lookback, {name} at t+horizon)"
-    if source_label:
-        title = f"{title} — {source_label}"
-    ax.set(title=title, xlabel="Forecast horizon", ylabel="Lookback")
     return ax, grid
 
 
