@@ -9,60 +9,22 @@ from qld_ckan.wind.downloader import fetch_all, fetch_year_datastore
 from qld_ckan.wind.pipeline import clean
 
 
-def _datastore_response(records: list[dict], total: int | None = None) -> MagicMock:
-    mock = MagicMock()
-    mock.raise_for_status.return_value = None
-    mock.json.return_value = {
-        "result": {
-            "total": total if total is not None else len(records),
-            "records": records,
-        }
-    }
-    return mock
-
-
-_RAW_RECORDS = [
-    {
-        "_id": 1,
-        "Date": "2024-01-01T00:00:00",
-        "Time": "00:00",
-        "Wind Direction (degTN)": 180,
-        "Wind Speed (m/s)": 2.5,
-        "Wind Sigma Theta (deg)": 18.0,
-        "Wind Speed Std Dev (m/s)": 0.7,
-        "Ozone (ppm)": 0.02,
-        "PM10 (ug/m^3)": 12.0,
-    },
-    {
-        "_id": 2,
-        "Date": "2024-01-01T00:00:00",
-        "Time": "01:00",
-        "Wind Direction (degTN)": 185,
-        "Wind Speed (m/s)": 2.7,
-        "Wind Sigma Theta (deg)": 17.0,
-        "Wind Speed Std Dev (m/s)": 0.8,
-        "Ozone (ppm)": 0.02,
-        "PM10 (ug/m^3)": 11.5,
-    },
-]
-
-
 # ---------------------------------------------------------------------------
 # fetch_year_datastore
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_year_drops_id_column():
+def test_fetch_year_drops_id_column(datastore_response, wind_raw_records):
     with patch("qld_ckan.wind.downloader._session") as mock_session:
-        mock_session.return_value.get.return_value = _datastore_response(_RAW_RECORDS)
+        mock_session.return_value.get.return_value = datastore_response(wind_raw_records)
         df = fetch_year_datastore(2024, "rid")
     assert "_id" not in df.columns
     assert "Wind Speed (m/s)" in df.columns
 
 
-def test_fetch_year_paginates_until_total_reached():
-    page1 = _datastore_response(_RAW_RECORDS[:1], total=2)
-    page2 = _datastore_response(_RAW_RECORDS[1:], total=2)
+def test_fetch_year_paginates_until_total_reached(datastore_response, wind_raw_records):
+    page1 = datastore_response(wind_raw_records[:1], total=2)
+    page2 = datastore_response(wind_raw_records[1:], total=2)
     with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.side_effect = [page1, page2]
         df = fetch_year_datastore(2024, "rid")
@@ -75,8 +37,15 @@ def test_fetch_year_paginates_until_total_reached():
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_all_skips_404():
-    error_response = MagicMock(status_code=404)
+@pytest.mark.parametrize(
+    "status_code, expected_frames, raises",
+    [
+        (404, 0, False),
+        (500, None, True),
+    ],
+)
+def test_fetch_all_handles_http_errors(status_code, expected_frames, raises):
+    error_response = MagicMock(status_code=status_code)
     http_error = requests.exceptions.HTTPError(response=error_response)
 
     def _get(*_args, **_kwargs):
@@ -86,23 +55,12 @@ def test_fetch_all_skips_404():
 
     with patch("qld_ckan.wind.downloader._session") as mock_session:
         mock_session.return_value.get.side_effect = _get
-        frames = fetch_all({2099: "missing"})
-    assert frames == []
-
-
-def test_fetch_all_reraises_non_404():
-    error_response = MagicMock(status_code=500)
-    http_error = requests.exceptions.HTTPError(response=error_response)
-
-    def _get(*_args, **_kwargs):
-        mock = MagicMock()
-        mock.raise_for_status.side_effect = http_error
-        return mock
-
-    with patch("qld_ckan.wind.downloader._session") as mock_session:
-        mock_session.return_value.get.side_effect = _get
-        with pytest.raises(requests.exceptions.HTTPError):
-            fetch_all({2024: "rid"})
+        if raises:
+            with pytest.raises(requests.exceptions.HTTPError):
+                fetch_all({2024: "rid"})
+        else:
+            frames = fetch_all({2099: "missing"})
+            assert len(frames) == expected_frames
 
 
 # ---------------------------------------------------------------------------
@@ -110,16 +68,16 @@ def test_fetch_all_reraises_non_404():
 # ---------------------------------------------------------------------------
 
 
-def test_clean_combines_date_and_time_into_utc_index():
-    df = clean(pd.DataFrame(_RAW_RECORDS).drop(columns=["_id"]))
+def test_clean_combines_date_and_time_into_utc_index(wind_raw_records):
+    df = clean(pd.DataFrame(wind_raw_records).drop(columns=["_id"]))
     # 2024-01-01 00:00 Brisbane (UTC+10) is 2023-12-31 14:00 UTC.
     assert df.index[0] == pd.Timestamp("2023-12-31 14:00", tz="UTC")
     assert str(df.index.tz) == "UTC"
     assert df.index.name == "datetime_utc"
 
 
-def test_clean_renames_wind_columns_and_drops_pollutants():
-    df = clean(pd.DataFrame(_RAW_RECORDS).drop(columns=["_id"]))
+def test_clean_renames_wind_columns_and_drops_pollutants(wind_raw_records):
+    df = clean(pd.DataFrame(wind_raw_records).drop(columns=["_id"]))
     assert list(df.columns) == [
         "wind_dir_deg",
         "wind_speed_ms",
@@ -140,8 +98,8 @@ def test_clean_reindexes_onto_hourly_grid():
     assert (df.index[1] - df.index[0]) == pd.Timedelta("1h")
 
 
-def test_clean_drops_duplicate_timestamps():
-    duplicated = _RAW_RECORDS + [_RAW_RECORDS[0]]
+def test_clean_drops_duplicate_timestamps(wind_raw_records):
+    duplicated = wind_raw_records + [wind_raw_records[0]]
     df = clean(pd.DataFrame(duplicated).drop(columns=["_id"]))
     assert df.index.is_unique
 
