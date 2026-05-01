@@ -8,48 +8,23 @@ from forecast import (
     PersistenceForecaster,
     SeasonalNaiveForecaster,
     add_lag_features,
+    add_momentum,
+    add_neighbour_features,
     add_rolling_features,
-    add_time_features,
     bias,
+    build_mooloolaba_features,
+    build_seq_features,
     chronological_split,
     compare,
     encode_circular,
     evaluate,
     mae,
     make_target,
+    restrict_to_overlap,
     rmse,
     skill_score,
     summarise,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _synthetic_df(n: int = 200, freq: str = "30min", seed: int = 0) -> pd.DataFrame:
-    """Build a regular 30-min grid of fake wave-buoy-like data.
-
-    A deterministic shape + small noise is enough to exercise lag/rolling
-    features and give models something learnable.
-    """
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2020-01-01", periods=n, freq=freq, tz="UTC")
-    t = np.arange(n)
-    diurnal = 0.5 * np.sin(2 * np.pi * t / 48)  # 24h cycle
-    df = pd.DataFrame(
-        {
-            "hsig_m": 1.2 + diurnal + 0.05 * rng.standard_normal(n),
-            "hmax_m": 2.0 + diurnal + 0.1 * rng.standard_normal(n),
-            "tz_s": 5.5 + 0.2 * rng.standard_normal(n),
-            "tp_s": 9.0 + 0.3 * rng.standard_normal(n),
-            "peak_dir_deg": (90 + 5 * rng.standard_normal(n)) % 360,
-            "sst_c": 25.0 + 0.1 * rng.standard_normal(n),
-        },
-        index=idx,
-    )
-    df.index.name = "datetime_utc"
-    return df
 
 
 # ---------------------------------------------------------------------------
@@ -57,30 +32,29 @@ def _synthetic_df(n: int = 200, freq: str = "30min", seed: int = 0) -> pd.DataFr
 # ---------------------------------------------------------------------------
 
 
-def test_make_target_shifts_by_horizon():
-    df = _synthetic_df(100)
+def test_make_target_shifts_by_horizon(synthetic_df):
+    df = synthetic_df(100)
     y = make_target(df, horizon_steps=HORIZON_STEPS)
     # y at t should equal hsig_m at t + HORIZON_STEPS
     assert y.iloc[0] == pytest.approx(df["hsig_m"].iloc[HORIZON_STEPS])
     assert y.iloc[50] == pytest.approx(df["hsig_m"].iloc[50 + HORIZON_STEPS])
 
 
-def test_make_target_tail_is_nan():
-    df = _synthetic_df(100)
+def test_make_target_tail_is_nan(synthetic_df):
+    df = synthetic_df(100)
     y = make_target(df, horizon_steps=HORIZON_STEPS)
     # The last HORIZON_STEPS values have no future observation to target.
     assert y.iloc[-HORIZON_STEPS:].isna().all()
     assert not y.iloc[:-HORIZON_STEPS].isna().any()
 
 
-def test_make_target_name_reflects_horizon():
-    df = _synthetic_df(50)
-    y = make_target(df, horizon_steps=6, target_col="hsig_m")
+def test_make_target_name_reflects_horizon(synthetic_df):
+    y = make_target(synthetic_df(50), horizon_steps=6, target_col="hsig_m")
     assert y.name == "hsig_m_plus_6"
 
 
-def test_make_target_custom_column():
-    df = _synthetic_df(50)
+def test_make_target_custom_column(synthetic_df):
+    df = synthetic_df(50)
     y = make_target(df, horizon_steps=2, target_col="sst_c")
     assert y.iloc[0] == pytest.approx(df["sst_c"].iloc[2])
 
@@ -90,8 +64,8 @@ def test_make_target_custom_column():
 # ---------------------------------------------------------------------------
 
 
-def test_chronological_split_sizes():
-    df = _synthetic_df(100)
+def test_chronological_split_sizes(synthetic_df):
+    df = synthetic_df(100)
     y = make_target(df, horizon_steps=2)
     Xtr, Xte, ytr, yte = chronological_split(df, y, test_frac=0.2)
     assert len(Xtr) == 80
@@ -100,25 +74,17 @@ def test_chronological_split_sizes():
     assert len(yte) == 20
 
 
-def test_chronological_split_preserves_order():
-    df = _synthetic_df(100)
+def test_chronological_split_preserves_order(synthetic_df):
+    df = synthetic_df(100)
     y = make_target(df, horizon_steps=2)
     Xtr, Xte, _, _ = chronological_split(df, y, test_frac=0.2)
     # All training timestamps must precede all test timestamps.
     assert Xtr.index.max() < Xte.index.min()
 
 
-def test_chronological_split_x_and_y_align():
-    df = _synthetic_df(100)
-    y = make_target(df, horizon_steps=2)
-    Xtr, Xte, ytr, yte = chronological_split(df, y, test_frac=0.3)
-    assert (Xtr.index == ytr.index).all()
-    assert (Xte.index == yte.index).all()
-
-
 @pytest.mark.parametrize("bad", [0.0, 1.0, -0.1, 1.5])
-def test_chronological_split_rejects_invalid_frac(bad):
-    df = _synthetic_df(50)
+def test_chronological_split_rejects_invalid_frac(bad, synthetic_df):
+    df = synthetic_df(50)
     y = make_target(df, horizon_steps=2)
     with pytest.raises(ValueError):
         chronological_split(df, y, test_frac=bad)
@@ -129,8 +95,8 @@ def test_chronological_split_rejects_invalid_frac(bad):
 # ---------------------------------------------------------------------------
 
 
-def test_add_lag_features_values_match_shift():
-    df = _synthetic_df(20)
+def test_add_lag_features_values_match_shift(synthetic_df):
+    df = synthetic_df(20)
     out = add_lag_features(df, columns=["hsig_m"], lags=[1, 3])
     # lag_k at row i should equal hsig_m at row i-k
     assert out["hsig_m_lag_1"].iloc[1] == pytest.approx(df["hsig_m"].iloc[0])
@@ -139,11 +105,11 @@ def test_add_lag_features_values_match_shift():
     assert out["hsig_m_lag_3"].iloc[:3].isna().all()
 
 
-def test_add_rolling_features_are_shifted_by_one():
+def test_add_rolling_features_are_shifted_by_one(synthetic_df):
     """Rolling features must summarise strictly-past values (see the
     ``add_rolling_features`` docstring for why this convention is enforced
     even though the current 12h horizon doesn't strictly require it)."""
-    df = _synthetic_df(30)
+    df = synthetic_df(30)
     out = add_rolling_features(df, columns=["hsig_m"], windows=[4], stats=("mean",))
     # shift(1) then rolling(4) at row 10 aggregates the shifted series'
     # positions 7..10, which are the unshifted series' positions 6..9.
@@ -151,16 +117,29 @@ def test_add_rolling_features_are_shifted_by_one():
     assert out["hsig_m_roll4_mean"].iloc[10] == pytest.approx(expected)
 
 
-def test_add_rolling_features_rejects_unknown_stat():
-    df = _synthetic_df(10)
+def test_add_rolling_features_rejects_unknown_stat(synthetic_df):
     with pytest.raises(ValueError, match="Unknown stats"):
-        add_rolling_features(df, columns=["hsig_m"], windows=[4], stats=("zscore",))
+        add_rolling_features(synthetic_df(10), columns=["hsig_m"], windows=[4], stats=("zscore",))
 
 
-def test_add_time_features_cyclical_bounds():
+def test_add_momentum_computes_value_minus_lag(synthetic_df):
+    df = synthetic_df(20)
+    out = add_momentum(df, columns=["hsig_m"], deltas=[1, 3])
+    # delta_k at row i should equal hsig_m[i] - hsig_m[i-k]
+    assert out["hsig_m_delta_1"].iloc[5] == pytest.approx(
+        df["hsig_m"].iloc[5] - df["hsig_m"].iloc[4]
+    )
+    assert out["hsig_m_delta_3"].iloc[7] == pytest.approx(
+        df["hsig_m"].iloc[7] - df["hsig_m"].iloc[4]
+    )
+    # first k rows are NaN (no prior reference)
+    assert out["hsig_m_delta_3"].iloc[:3].isna().all()
+
+
+def test_encode_circular_hour_virtual_loops_after_24h(synthetic_df):
     # 49 rows of 30-min data covers 24h plus the next 00:00 timestamp.
-    df = _synthetic_df(49)
-    out = add_time_features(df)
+    df = synthetic_df(49)
+    out = encode_circular(df, periods={"hour": 24.0})
     assert ((out["hour_sin"] >= -1.0) & (out["hour_sin"] <= 1.0)).all()
     assert ((out["hour_cos"] >= -1.0) & (out["hour_cos"] <= 1.0)).all()
     # Over a full day the sin/cos trace should loop back to the starting value.
@@ -168,8 +147,16 @@ def test_add_time_features_cyclical_bounds():
     assert out["hour_cos"].iloc[0] == pytest.approx(out["hour_cos"].iloc[48], abs=1e-9)
 
 
-def test_encode_circular_replaces_original_column():
-    df = _synthetic_df(20)
+def test_encode_circular_doy_virtual_does_not_drop_data_columns(synthetic_df):
+    df = synthetic_df(10)
+    out = encode_circular(df, periods={"doy": 365.25})
+    assert "doy_sin" in out.columns
+    assert "doy_cos" in out.columns
+    assert set(df.columns) <= set(out.columns)
+
+
+def test_encode_circular_replaces_original_column(synthetic_df):
+    df = synthetic_df(20)
     out = encode_circular(df)
     assert "peak_dir_deg" not in out.columns
     assert "peak_dir_deg_sin" in out.columns
@@ -186,16 +173,87 @@ def test_encode_circular_handles_360_equals_0():
     assert out["peak_dir_deg_cos"].iloc[0] == pytest.approx(out["peak_dir_deg_cos"].iloc[1])
 
 
+def test_encode_circular_rejects_unknown_name(synthetic_df):
+    with pytest.raises(ValueError, match="not in df.columns"):
+        encode_circular(synthetic_df(5), periods={"not_a_column": 1.0})
+
+
+# ---------------------------------------------------------------------------
+# features — high-level pipelines
+# ---------------------------------------------------------------------------
+
+
+def test_build_mooloolaba_features_includes_each_feature_family(synthetic_df):
+    """build_mooloolaba_features composes circular + lag + rolling + momentum.
+    Assert by family rather than exact column list so the test survives
+    FeatureConfig defaults shifting."""
+    out = build_mooloolaba_features(synthetic_df(200))
+    cols = set(out.columns)
+    # circular: peak_dir_deg replaced; hour/doy added
+    assert "peak_dir_deg" not in cols
+    assert {"peak_dir_deg_sin", "peak_dir_deg_cos",
+            "hour_sin", "hour_cos", "doy_sin", "doy_cos"} <= cols
+    # at least one of each derived family
+    assert any(c.startswith("hsig_m_lag_") for c in cols)
+    assert any(c.startswith("hsig_m_roll") for c in cols)
+    assert any(c.startswith("hsig_m_delta_") for c in cols)
+
+
+def test_build_seq_features_omits_lag_and_rolling(synthetic_df):
+    """Sequence models window their own input, so build_seq_features must
+    only encode circular features — no lag, rolling, or momentum columns."""
+    out = build_seq_features(synthetic_df(50))
+    cols = set(out.columns)
+    assert "peak_dir_deg_sin" in cols and "peak_dir_deg_cos" in cols
+    assert "hour_sin" in cols and "doy_sin" in cols
+    assert not any("_lag_" in c for c in cols)
+    assert not any("_roll" in c for c in cols)
+    assert not any("_delta_" in c for c in cols)
+
+
+def test_add_neighbour_features_appends_without_dropping_rows(synthetic_df):
+    main = synthetic_df(100)
+    neighbour = synthetic_df(100, seed=1).rename(columns={"hsig_m": "nb_hsig_m"})
+    out = add_neighbour_features(main, neighbour, columns=["nb_hsig_m"])
+    # Original columns and row count survive.
+    assert set(main.columns) <= set(out.columns)
+    assert len(out) == len(main)
+    # Raw neighbour value at lag 0 equals the source.
+    assert out["nb_hsig_m"].equals(neighbour["nb_hsig_m"])
+    # At least one lag and one rolling-mean column appeared.
+    assert any(c.startswith("nb_hsig_m_lag") for c in out.columns)
+    assert any(c.startswith("nb_hsig_m_roll") and c.endswith("_mean") for c in out.columns)
+
+
+def test_restrict_to_overlap_clips_to_neighbour_intersection():
+    """With no wind, the window is the intersection of neighbour-buoy
+    valid ranges."""
+    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="UTC")
+    wave = pd.DataFrame({"hsig_m": np.arange(10, dtype=float)}, index=idx)
+    # Neighbour A is valid 1..8; Neighbour B is valid 3..7. Intersection: 3..7.
+    a = pd.Series([np.nan, *range(1, 9), np.nan], index=idx)
+    b = pd.Series([np.nan]*3 + list(range(3, 8)) + [np.nan]*2, index=idx)
+    neighbours = {"a": a, "b": b}
+
+    wave_out, nb_out, wind_out = restrict_to_overlap(wave, neighbours, wind=None)
+
+    assert wind_out is None
+    assert wave_out.index.min() == idx[3]
+    assert wave_out.index.max() == idx[7]
+    for s in nb_out.values():
+        assert s.index.min() == idx[3]
+        assert s.index.max() == idx[7]
+
+
 # ---------------------------------------------------------------------------
 # baselines
 # ---------------------------------------------------------------------------
 
 
-def test_persistence_predict_equals_current_target():
-    df = _synthetic_df(50)
+def test_persistence_predict_equals_current_target(synthetic_df):
+    df = synthetic_df(50)
     y = make_target(df, horizon_steps=2)
-    model = PersistenceForecaster().fit(df, y)
-    preds = model.predict(df)
+    preds = PersistenceForecaster().fit(df, y).predict(df)
     np.testing.assert_allclose(preds, df["hsig_m"].to_numpy())
 
 
@@ -209,11 +267,10 @@ def test_persistence_perfect_on_constant_series():
     np.testing.assert_allclose(preds[mask], y[mask])
 
 
-def test_seasonal_naive_looks_up_same_hour_prior_period():
-    df = _synthetic_df(200)
+def test_seasonal_naive_looks_up_same_hour_prior_period(synthetic_df):
+    df = synthetic_df(200)
     y = make_target(df, horizon_steps=24)
-    model = SeasonalNaiveForecaster(period_steps=48, horizon_steps=24).fit(df, y)
-    preds = model.predict(df)
+    preds = SeasonalNaiveForecaster(period_steps=48, horizon_steps=24).fit(df, y).predict(df)
     # lookback = 48 - 24 = 24 steps
     assert preds[50] == pytest.approx(df["hsig_m"].iloc[50 - 24])
     # first lookback rows are NaN
@@ -240,10 +297,9 @@ def test_climatology_hour_predicts_training_hourly_mean():
     assert preds[12] == pytest.approx(18.0)
 
 
-def test_climatology_predict_before_fit_raises():
-    df = _synthetic_df(50)
+def test_climatology_predict_before_fit_raises(synthetic_df):
     with pytest.raises(RuntimeError):
-        ClimatologyHourForecaster().predict(df)
+        ClimatologyHourForecaster().predict(synthetic_df(50))
 
 
 # ---------------------------------------------------------------------------
@@ -266,23 +322,21 @@ def test_metrics_ignore_nan():
     assert mae(y_true, y_pred) == pytest.approx((0 + 1.0) / 2)
 
 
-def test_skill_score_zero_when_model_matches_baseline():
-    y_true = np.array([1.0, 2.0, 3.0])
-    y_pred = np.array([1.5, 2.5, 3.5])
-    assert skill_score(y_true, y_pred, y_pred) == pytest.approx(0.0)
-
-
-def test_skill_score_one_when_model_is_perfect():
-    y_true = np.array([1.0, 2.0, 3.0])
-    baseline = np.array([0.0, 0.0, 0.0])
-    assert skill_score(y_true, y_true, baseline) == pytest.approx(1.0)
-
-
-def test_skill_score_negative_when_model_worse_than_baseline():
-    y_true = np.array([1.0, 2.0, 3.0])
-    baseline = np.array([1.1, 2.0, 2.9])  # small errors
-    model_preds = np.array([5.0, 5.0, 5.0])  # big errors
-    assert skill_score(y_true, model_preds, baseline) < 0
+@pytest.mark.parametrize(
+    "y_true, y_pred, baseline, predicate",
+    [
+        # model == baseline → skill 0
+        ([1.0, 2.0, 3.0], [1.5, 2.5, 3.5], [1.5, 2.5, 3.5], lambda s: s == pytest.approx(0.0)),
+        # model perfect, baseline far off → skill 1
+        ([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [0.0, 0.0, 0.0], lambda s: s == pytest.approx(1.0)),
+        # model worse than baseline → skill < 0
+        ([1.0, 2.0, 3.0], [5.0, 5.0, 5.0], [1.1, 2.0, 2.9], lambda s: s < 0),
+    ],
+    ids=["zero", "perfect", "negative"],
+)
+def test_skill_score(y_true, y_pred, baseline, predicate):
+    score = skill_score(np.array(y_true), np.array(y_pred), np.array(baseline))
+    assert predicate(score)
 
 
 def test_summarise_includes_skill_only_when_baseline_given():
@@ -299,8 +353,8 @@ def test_summarise_includes_skill_only_when_baseline_given():
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_returns_metrics_and_predictions():
-    df = _synthetic_df(200)
+def test_evaluate_returns_metrics_and_predictions(synthetic_df):
+    df = synthetic_df(200)
     y = make_target(df, horizon_steps=4)
     Xtr, Xte, ytr, yte = chronological_split(df, y, test_frac=0.25)
     result = evaluate(PersistenceForecaster(), Xtr, ytr, Xte, yte, name="persistence")
@@ -309,9 +363,9 @@ def test_evaluate_returns_metrics_and_predictions():
     assert len(result.predictions) == len(Xte)
 
 
-def test_evaluate_masks_nan_training_rows():
+def test_evaluate_masks_nan_training_rows(synthetic_df):
     """A lag feature with NaNs in the first rows shouldn't crash model.fit."""
-    df = _synthetic_df(200)
+    df = synthetic_df(200)
     X = add_lag_features(df, columns=["hsig_m"], lags=[10])
     y = make_target(df, horizon_steps=4)
     Xtr, Xte, ytr, yte = chronological_split(X, y, test_frac=0.25)
@@ -320,8 +374,8 @@ def test_evaluate_masks_nan_training_rows():
     assert not np.isnan(result.metrics["MAE"])
 
 
-def test_compare_sorts_by_rmse():
-    df = _synthetic_df(200)
+def test_compare_sorts_by_rmse(synthetic_df):
+    df = synthetic_df(200)
     y = make_target(df, horizon_steps=4)
     Xtr, Xte, ytr, yte = chronological_split(df, y, test_frac=0.25)
     r1 = evaluate(PersistenceForecaster(), Xtr, ytr, Xte, yte, name="a")

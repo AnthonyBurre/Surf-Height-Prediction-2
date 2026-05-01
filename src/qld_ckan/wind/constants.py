@@ -1,5 +1,3 @@
-CKAN_API_BASE = "https://www.data.qld.gov.au/api/3/action"
-
 # Hourly air-quality + meteorology stations from the QLD Government CKAN portal.
 # Resource IDs are stable across portal file renames. Mountain Creek is the
 # default: it sits at -26.6917, 153.1038 — effectively co-located with the

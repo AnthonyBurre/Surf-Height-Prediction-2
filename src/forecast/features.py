@@ -89,41 +89,47 @@ def add_rolling_features(
     return out
 
 
-def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Cyclical encodings of hour-of-day and day-of-year.
-
-    Sin/cos pairs let a linear model represent "similar hours are close"
-    without a one-hot blowup, and avoid the Dec-31 → Jan-1 cliff.
-    """
-    out = df.copy()
-    hour = df.index.hour + df.index.minute / 60.0
-    out["hour_sin"] = np.sin(2 * np.pi * hour / 24.0)
-    out["hour_cos"] = np.cos(2 * np.pi * hour / 24.0)
-    doy = df.index.dayofyear.to_numpy(dtype=float)
-    out["doy_sin"] = np.sin(2 * np.pi * doy / 365.25)
-    out["doy_cos"] = np.cos(2 * np.pi * doy / 365.25)
-    return out
-
-
 def encode_circular(
     df: pd.DataFrame,
-    columns: list[str] | None = None,
-    period_deg: float = 360.0,
+    periods: dict[str, float] | None = None,
 ) -> pd.DataFrame:
-    """Replace each circular column with its sin/cos pair.
+    """Replace each circular feature with a sin/cos pair.
 
-    Applied to the source columns themselves, so any downstream lag/rolling
-    features already see the encoded representation when this is called
-    first in the pipeline.
+    ``periods`` maps name → period; the name can be either:
+      - a column already in ``df`` (replaced with ``{name}_sin``/``{name}_cos``), or
+      - one of the virtual names ``"hour"`` (period 24) or ``"doy"``
+        (period 365.25), which are derived from the DatetimeIndex and added
+        as new columns.
+
+    With ``periods=None``: encode every ``CIRCULAR_COLS`` column present in
+    ``df`` with period 360.
+
+    Sin/cos pairs let a linear model represent "similar values are close"
+    without a one-hot blowup, and avoid the Dec-31 → Jan-1 (or 359° → 1°)
+    cliff. Apply this first in the pipeline so any downstream lag/rolling
+    features see the encoded representation.
     """
-    if columns is None:
-        columns = [c for c in CIRCULAR_COLS if c in df.columns]
+    if periods is None:
+        periods = {c: 360.0 for c in CIRCULAR_COLS if c in df.columns}
+
     out = df.copy()
-    for col in columns:
-        rad = 2 * np.pi * out[col] / period_deg
-        out[f"{col}_sin"] = np.sin(rad)
-        out[f"{col}_cos"] = np.cos(rad)
-        out = out.drop(columns=col)
+    for name, period in periods.items():
+        if name == "hour":
+            values = df.index.hour + df.index.minute / 60.0
+        elif name == "doy":
+            values = df.index.dayofyear.to_numpy(dtype=float)
+        elif name in df.columns:
+            values = df[name].to_numpy()
+        else:
+            raise ValueError(
+                f"encode_circular: {name!r} not in df.columns and not a "
+                f"recognised virtual name (hour, doy)."
+            )
+        rad = 2 * np.pi * values / period
+        out[f"{name}_sin"] = np.sin(rad)
+        out[f"{name}_cos"] = np.cos(rad)
+        if name in df.columns:
+            out = out.drop(columns=name)
     return out
 
 
@@ -157,8 +163,8 @@ def build_mooloolaba_features(
     if config is None:
         config = FeatureConfig()
     return (
-        df.pipe(encode_circular)
-          .pipe(add_time_features)
+        df.pipe(encode_circular,
+                periods={"peak_dir_deg": 360.0, "hour": 24.0, "doy": 365.25})
           .pipe(add_lag_features,
                 columns=["hsig_m", "hmax_m", "tp_s", "tz_s"],
                 lags=config.lag_steps)
@@ -213,4 +219,7 @@ def build_seq_features(df: pd.DataFrame) -> pd.DataFrame:
     over ``seq_len`` steps and is expected to learn temporal structure
     itself. Pass the result directly to an ``LSTMForecaster`` (or GRU/TCN).
     """
-    return df.pipe(encode_circular).pipe(add_time_features)
+    return df.pipe(
+        encode_circular,
+        periods={"peak_dir_deg": 360.0, "hour": 24.0, "doy": 365.25},
+    )

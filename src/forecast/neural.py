@@ -85,8 +85,11 @@ class _TorchSeqForecaster:
         Xa = self._select(X)
         ya = y.to_numpy(dtype=np.float32)
 
-        self._x_mean = Xa.mean(axis=0)
-        self._x_std = Xa.std(axis=0) + 1e-8
+        # NaN-aware: a single NaN in any column otherwise poisons the mean and
+        # standardised tensor, after which the per-batch valid-row mask
+        # discards almost every window and training collapses.
+        self._x_mean = np.nanmean(Xa, axis=0)
+        self._x_std = np.nanstd(Xa, axis=0) + 1e-8
         self._y_mean = float(np.nanmean(ya))
         self._y_std = float(np.nanstd(ya) + 1e-8)
 

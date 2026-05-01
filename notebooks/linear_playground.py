@@ -26,7 +26,6 @@ Tips
 
 import time
 import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -35,13 +34,10 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Lasso, Ridge
 
 import forecast as fc
-from forecast.features import encode_circular
 from forecast.metrics import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
-
-DATA_DIR = Path(__file__).parent.parent / "data"
 
 # ---------------------------------------------------------------------------
 # CONFIG — edit me
@@ -93,18 +89,6 @@ _HGB_DEFAULTS    = {
     "max_iter": 800, "learning_rate": 0.03, "max_depth": 6,
     "min_samples_leaf": 50, "l2_regularization": 1.0, "random_state": 42,
     "early_stopping": True, "validation_fraction": 0.15, "n_iter_no_change": 40,
-}
-
-_NEIGHBOUR_FILES = {
-    "brisbane":          "brisbane_wave_data_2015-2025.csv",
-    "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
-    "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
-}
-
-_WIND_FILES = {
-    "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
-    "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
 }
 
 # ---------------------------------------------------------------------------
@@ -166,44 +150,6 @@ def _load_wave(year_min, year_max) -> pd.DataFrame:
     if year_max is not None:
         df = df.loc[df.index.year <= year_max]
     return df
-
-
-def _load_neighbours(target_index: pd.DatetimeIndex,
-                     neighbours: list[str]) -> dict[str, pd.Series]:
-    out: dict[str, pd.Series] = {}
-    for name in neighbours:
-        if name not in _NEIGHBOUR_FILES:
-            raise ValueError(f"Unknown neighbour {name!r}; supported: {list(_NEIGHBOUR_FILES)}")
-        nb = pd.read_csv(
-            DATA_DIR / _NEIGHBOUR_FILES[name],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
-        )
-        out[name] = nb["hsig_m"].reindex(target_index)
-    return out
-
-
-def _load_wind(target_index: pd.DatetimeIndex,
-               stations: list[str]) -> pd.DataFrame | None:
-    """Load one or more wind stations into a single station-prefixed frame.
-
-    Returns None if no stations are requested. When multiple stations are
-    requested, columns are namespaced by station slug (e.g.
-    ``mountain-creek_wind_speed_ms``) so models see independent inputs.
-    """
-    if not stations:
-        return None
-    frames: list[pd.DataFrame] = []
-    for s in stations:
-        if s not in _WIND_FILES:
-            raise ValueError(f"Unknown wind station {s!r}; supported: {list(_WIND_FILES)}")
-        w = pd.read_csv(
-            DATA_DIR / _WIND_FILES[s],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
-        )
-        w = encode_circular(w, columns=["wind_dir_deg"])
-        w = w.add_prefix(f"{s}_")
-        frames.append(w.reindex(target_index, method="ffill"))
-    return pd.concat(frames, axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -325,21 +271,10 @@ def main() -> None:
     hgb_kw   = _resolve_hyperparams(cfg["hgb"],   _HGB_DEFAULTS)
 
     wave = _load_wave(cfg["year_min"], cfg["year_max"])
-    neighbours = _load_neighbours(wave.index, cfg["neighbours"])
-    wind = _load_wind(wave.index, cfg["wind_stations"])
+    neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
+    wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
-    if wind is not None:
-        valid = wind.dropna(how="all")
-        start, end = valid.index.min(), valid.index.max()
-        wave = wave.loc[start:end]
-        neighbours = {k: v.loc[start:end] for k, v in neighbours.items()}
-        wind = wind.loc[start:end]
-    elif cfg["neighbours"]:
-        starts = [s.dropna().index.min() for s in neighbours.values()]
-        ends   = [s.dropna().index.max() for s in neighbours.values()]
-        start, end = max(starts), min(ends)
-        wave = wave.loc[start:end]
-        neighbours = {k: v.loc[start:end] for k, v in neighbours.items()}
+    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
 
     print(f"window         : {wave.index.min().date()} → {wave.index.max().date()}")
     print(f"rows           : {len(wave):,}")
@@ -413,6 +348,7 @@ def main() -> None:
             fc.log_run(ens, data_sources=sources,
                        train_index=X_tr.index, test_index=X_te.index,
                        n_features=X.shape[1],
+                       model_class="NanMeanEnsemble",
                        extra={**extra_base,
                               "members": [r.name for r in results],
                               "combiner": "nanmean"})

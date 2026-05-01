@@ -101,16 +101,25 @@ def log_run(
     n_features: int | None = None,
     extra: dict | None = None,
     path: str | Path = DEFAULT_LOG,
+    model_class: str | None = None,
 ) -> dict:
     """Append one record to ``experiments.jsonl``.
 
+    ``model_class`` overrides the class-name lookup; pass it for synthetic
+    models (e.g. ensembles) where ``result.model`` is None and the run name
+    isn't a useful class label.
+
     Returns the logged record (also useful for assertions in tests).
     """
+    if model_class is None:
+        model_class = (
+            type(result.model).__name__ if result.model is not None else result.name
+        )
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "git_sha": _git_sha(),
         "name": result.name,
-        "model_class": type(result.model).__name__ if result.model is not None else result.name,
+        "model_class": model_class,
         "hyperparams": _model_hyperparams(result.model),
         "data_sources": [str(s) for s in data_sources],
         "n_features": int(n_features) if n_features is not None else None,

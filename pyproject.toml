@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wave-data"
 version = "0.1.0"
-description = "Download and unify Mooloolaba wave buoy data from the Queensland Government CKAN portal."
+description = "Surf-height forecasting from QLD CKAN feeds: wave buoys + AWS wind under qld_ckan, modelling under forecast, plotting under viz."
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.0",
@@ -13,18 +13,9 @@ dependencies = [
     "requests>=2.32",
 ]
 
-[project.optional-dependencies]
-viz = [
-    "matplotlib",
-    "seaborn",
-]
-forecast = [
-    "torch",
-]
-dev = [
-    "pytest",
-    "scikit-learn",
-]
+# The full env (matplotlib, seaborn, torch, scikit-learn, pytest) is pinned in
+# requirements.txt and is the documented install path. ``pip install -e .``
+# alone gives you the ETL packages; the rest comes from requirements.txt.
 
 [tool.setuptools.packages.find]
 where = ["src"]
