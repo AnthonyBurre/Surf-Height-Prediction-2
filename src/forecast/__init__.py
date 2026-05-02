@@ -13,7 +13,7 @@ Example
 -------
 >>> from forecast import load_data, make_target, chronological_split
 >>> from forecast import PersistenceForecaster, evaluate
->>> df = load_data()
+>>> df = load_data(buoy="mooloolaba")
 >>> y = make_target(df)
 >>> X_train, X_test, y_train, y_test = chronological_split(df, y)
 >>> evaluate(PersistenceForecaster(), X_train, y_train, X_test, y_test)
@@ -49,7 +49,7 @@ from .features import (
     add_momentum,
     add_neighbour_features,
     add_rolling_features,
-    build_mooloolaba_features,
+    build_buoy_features,
     build_seq_features,
     encode_circular,
 )
@@ -92,7 +92,7 @@ __all__ = [
     "add_momentum",
     "add_neighbour_features",
     "add_rolling_features",
-    "build_mooloolaba_features",
+    "build_buoy_features",
     "build_seq_features",
     "encode_circular",
     # baselines

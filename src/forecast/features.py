@@ -150,7 +150,7 @@ def add_momentum(
     return out
 
 
-def build_mooloolaba_features(
+def build_buoy_features(
     df: pd.DataFrame,
     config: FeatureConfig | None = None,
 ) -> pd.DataFrame:
@@ -158,7 +158,9 @@ def build_mooloolaba_features(
 
     ``df`` should contain only the primary buoy's columns (no neighbour
     columns). Call ``add_neighbour_features`` on the result to append
-    cross-buoy inputs.
+    cross-buoy inputs. Works for any QLD wave buoy — the column names
+    referenced (``hsig_m``, ``hmax_m``, ``tp_s``, ``tz_s``, ``peak_dir_deg``)
+    are the standard CKAN wave schema, shared across all buoys in the network.
     """
     if config is None:
         config = FeatureConfig()
@@ -188,7 +190,7 @@ def add_neighbour_features(
 
     Args:
         X: existing feature matrix to extend (typically from
-            ``build_mooloolaba_features``).
+            ``build_buoy_features``).
         source_df: DataFrame containing the raw neighbour columns, indexed
             on the same DatetimeIndex as ``X``.
         columns: column names in ``source_df`` to use as neighbour inputs.

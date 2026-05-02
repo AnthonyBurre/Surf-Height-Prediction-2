@@ -12,7 +12,7 @@ from forecast import (
     add_neighbour_features,
     add_rolling_features,
     bias,
-    build_mooloolaba_features,
+    build_buoy_features,
     build_seq_features,
     chronological_split,
     compare,
@@ -183,11 +183,11 @@ def test_encode_circular_rejects_unknown_name(synthetic_df):
 # ---------------------------------------------------------------------------
 
 
-def test_build_mooloolaba_features_includes_each_feature_family(synthetic_df):
-    """build_mooloolaba_features composes circular + lag + rolling + momentum.
+def test_build_buoy_features_includes_each_feature_family(synthetic_df):
+    """build_buoy_features composes circular + lag + rolling + momentum.
     Assert by family rather than exact column list so the test survives
     FeatureConfig defaults shifting."""
-    out = build_mooloolaba_features(synthetic_df(200))
+    out = build_buoy_features(synthetic_df(200))
     cols = set(out.columns)
     # circular: peak_dir_deg replaced; hour/doy added
     assert "peak_dir_deg" not in cols

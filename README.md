@@ -61,9 +61,9 @@ All modelling code lives in `src/forecast/` and exposes a flat import surface:
 ```python
 import forecast as fc
 
-df = fc.load_data()                              # tz-aware, 30-min grid
+df = fc.load_data(buoy="mooloolaba")             # tz-aware, 30-min grid
 y  = fc.make_target(df)                          # y.loc[t] == hsig_m[t + 12h]
-X  = fc.build_mooloolaba_features(df)            # lag + rolling + momentum + time features
+X  = fc.build_buoy_features(df)                  # lag + rolling + momentum + time features
 X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
 
 result = fc.evaluate_and_log(
@@ -76,11 +76,11 @@ print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ..., "SkillVsBaseline
 
 ### Feature engineering
 
-`fc.build_mooloolaba_features(df)` produces the full primary-buoy feature matrix (circular encoding, time features, lags, rolling stats, momentum). Neighbour buoys are appended with `fc.add_neighbour_features(X, source_df, columns)`. Both accept a `FeatureConfig` to tune lag steps, rolling windows, and delta steps:
+`fc.build_buoy_features(df)` produces the full primary-buoy feature matrix (circular encoding, time features, lags, rolling stats, momentum) for any QLD wave buoy. Neighbour buoys are appended with `fc.add_neighbour_features(X, source_df, columns)`. Both accept a `FeatureConfig` to tune lag steps, rolling windows, and delta steps:
 
 ```python
 cfg = fc.FeatureConfig(lag_steps=[1, 2, 6, 24], roll_windows=[12, 48])
-X = fc.build_mooloolaba_features(df, config=cfg)
+X = fc.build_buoy_features(df, config=cfg)
 ```
 
 For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circular encoding and time features only, no pre-built lags (the model windows its own input).
@@ -159,7 +159,7 @@ Surf-Height-Prediction-2/
 │   ├── forecast/               # modelling package
 │   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
 │   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
-│   │   ├── features.py         # FeatureConfig, build_mooloolaba_features, add_neighbour_features, build_seq_features
+│   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
 │   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
 │   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
 │   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
@@ -215,7 +215,7 @@ slot gets the 14:00 wind value), which is strictly past-only.
 
 Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is
 sin/cos-encoded before being passed to add_neighbour_features — same pattern
-as the wave-buoy peak_dir_deg encoding in build_mooloolaba_features.
+as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 
 
 ## License

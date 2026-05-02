@@ -8,37 +8,6 @@ hyperparameters. Edit it in place and re-run - no other code changes needed.
 Each completed run appends to experiments.jsonl with a name derived from the
 CONFIG, so back-to-back runs with different settings stay distinguishable.
 
-Why this script exists
-----------------------
-The earlier LSTM (`mooloolaba_brisbane_lstm.py`) underperformed persistence
-across every logged configuration (best skill: -55%). The two failure modes
-called out in that script's header were:
-
-  (a) Raw circular-encoded channels carry too little information — the model
-      has to rediscover what the lag/momentum features encode explicitly.
-  (b) CPU is slow enough that ramping epochs is painful (~25 min / 50 epochs
-      at hidden=64).
-
-This playground addresses both: switch ``feature_mode`` to ``"engineered"``
-to give the model the same lag/rolling matrix the linear models use, and
-flip ``subsample_steps`` to a small number for fast iteration before
-committing to a full-length training run.
-
-Starting points to try (paste into CONFIG)
-------------------------------------------
-1. Quick smoke (≈30s on CPU):
-     model="gru", feature_mode="raw", epochs=3, subsample_steps=20000
-2. Default sane run (≈8 min CPU):
-     model="gru", feature_mode="raw", wind_stations=["mountain-creek"], epochs=15
-3. Engineered features — should beat the raw-input LSTM:
-     model="gru", feature_mode="engineered", wind_stations=["mountain-creek"], epochs=15
-4. TCN, parallelisable conv-based:
-     model="tcn", feature_mode="raw", wind_stations=["mountain-creek"], epochs=20
-5. Throw everything in:
-     model="gru", feature_mode="engineered",
-     wind_stations=["mountain-creek", "deception-bay"],
-     neighbours=["brisbane"], epochs=30, hidden=128
-
 Tips
 ----
 - ``device=None`` auto-detects (cuda > mps > cpu). On this Mac MPS is built
@@ -71,25 +40,26 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 
 CONFIG: dict = {
     # --- data ---
+    "primary_buoy":  "mooloolaba",  # any key in qld_ckan.wave.constants.BUOYS; download with `python -m qld_ckan wave --buoy NAME`
     "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
-    "neighbours":    ["brisbane"],          # subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
+    "neighbours":    ["brisbane", "gold-coast", "north-moreton-bay"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
     "wind_stations": ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- features ---
     # "raw"        — circular-encoded raw channels + sin/cos time features
     #                (matches build_seq_features; what the previous LSTM used)
     # "engineered" — full lag + rolling + momentum matrix
-    #                (matches build_mooloolaba_features; what Ridge uses)
-    "feature_mode": "raw",
+    #                (matches build_buoy_features; what Ridge uses)
+    "feature_mode": "engineered",
 
     # --- model ---
-    "model":         "lstm",       # "lstm", "gru", "rnn", "tcn"
+    "model":         "gru",       # "lstm", "gru", "rnn", "tcn"
 
     # shared seq-model hyperparams
     "seq_len":       48,          # 48 × 30 min = 24 h of context
-    "hidden":        96,
+    "hidden":        128,
     "num_layers":    2,
-    "epochs":        10,
+    "epochs":        30,
     "batch_size":    512,
     "lr":            1e-3,
     "seed":          42,
@@ -122,8 +92,8 @@ def auto_device(preferred: str | None) -> str:
     return "cpu"
 
 
-def load_wave(year_max: int) -> pd.DataFrame:
-    df = fc.load_data()
+def load_wave(buoy: str, year_max: int) -> pd.DataFrame:
+    df = fc.load_data(buoy=buoy)
     return df.loc[df.index.year <= year_max]
 
 
@@ -148,8 +118,8 @@ def build_features(
             for col in wind.columns:
                 X[col] = wind[col]
     elif mode == "engineered":
-        mool_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-        X = fc.build_mooloolaba_features(mool_only)
+        primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
+        X = fc.build_buoy_features(primary_only)
         if neighbour_cols:
             X = fc.add_neighbour_features(X, merged, neighbour_cols)
         if wind is not None:
@@ -197,7 +167,7 @@ def main() -> None:
     device = auto_device(cfg["device"])
     print(f"device         : {device}")
 
-    wave = load_wave(cfg["year_max"])
+    wave = load_wave(cfg["primary_buoy"], cfg["year_max"])
     neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
     wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
@@ -252,7 +222,7 @@ def main() -> None:
     print(f"  MAE   {metrics['MAE']:.4f}    Bias  {metrics['Bias']:+.4f}")
 
     if cfg["log_to_jsonl"]:
-        sources = ["mooloolaba"] + cfg["neighbours"] + cfg["wind_stations"]
+        sources = [cfg["primary_buoy"]] + cfg["neighbours"] + cfg["wind_stations"]
         fc.log_run(
             result,
             data_sources=sources,

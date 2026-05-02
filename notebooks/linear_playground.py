@@ -45,11 +45,12 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 
 CONFIG: dict = {
     # --- data window ---
+    "primary_buoy": "mooloolaba",  # any key in qld_ckan.wave.constants.BUOYS; download with `python -m qld_ckan wave --buoy NAME`
     "year_min":     None,   # None = data start; e.g. 2024 for the short multi-buoy window
     "year_max":     2024,   # None = data end;   e.g. 2024 to match the wind window
 
     # --- extra sources ---
-    "neighbours":     ["caloundra", "brisbane", "goldcoast", "north-moreton-bay"],     # any subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
+    "neighbours":     ["caloundra", "brisbane", "gold-coast", "north-moreton-bay"],     # any subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
     "wind_stations":  ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- feature engineering (FeatureConfig knobs) ---
@@ -143,8 +144,8 @@ def _make_run_name(cfg: dict) -> str:
 # Data loading
 # ---------------------------------------------------------------------------
 
-def _load_wave(year_min, year_max) -> pd.DataFrame:
-    df = fc.load_data()
+def _load_wave(buoy, year_min, year_max) -> pd.DataFrame:
+    df = fc.load_data(buoy=buoy)
     if year_min is not None:
         df = df.loc[df.index.year >= year_min]
     if year_max is not None:
@@ -174,8 +175,8 @@ def _build_features(wave: pd.DataFrame,
         merged[col] = series
         neighbour_cols.append(col)
 
-    mool_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-    X = fc.build_mooloolaba_features(mool_only, config=feat_cfg)
+    primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
+    X = fc.build_buoy_features(primary_only, config=feat_cfg)
 
     if neighbour_cols:
         X = fc.add_neighbour_features(X, merged, neighbour_cols, config=feat_cfg)
@@ -270,7 +271,7 @@ def main() -> None:
     lasso_kw = _resolve_hyperparams(cfg["lasso"], _LASSO_DEFAULTS)
     hgb_kw   = _resolve_hyperparams(cfg["hgb"],   _HGB_DEFAULTS)
 
-    wave = _load_wave(cfg["year_min"], cfg["year_max"])
+    wave = _load_wave(cfg["primary_buoy"], cfg["year_min"], cfg["year_max"])
     neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
     wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
@@ -293,7 +294,7 @@ def main() -> None:
     print(f"top NaN cols   : {worst}\n")
 
     run_name = _make_run_name(cfg)
-    sources = ["mooloolaba"] + cfg["neighbours"] + cfg["wind_stations"]
+    sources = [cfg["primary_buoy"]] + cfg["neighbours"] + cfg["wind_stations"]
     log = cfg["log_to_jsonl"]
     window_str = f"{wave.index.min().date()}:{wave.index.max().date()}"
     extra_base: dict = {
@@ -308,7 +309,7 @@ def main() -> None:
     persist = _timed(persist_name, fc.evaluate_and_log if log else fc.evaluate,
                      fc.PersistenceForecaster(),
                      X_p_tr, y_tr, X_p_te, y_te,
-                     name=persist_name, data_sources=["mooloolaba"],
+                     name=persist_name, data_sources=[cfg["primary_buoy"]],
                      extra={"window": window_str}) if log else \
               _timed(persist_name, fc.evaluate,
                      fc.PersistenceForecaster(),

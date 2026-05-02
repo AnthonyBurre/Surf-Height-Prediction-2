@@ -75,13 +75,14 @@ def chronological_split(
 
 
 # Filename registries for the multi-source playgrounds. Keys are the slugs the
-# CONFIG dicts pass through (note the ``goldcoast`` no-hyphen convention used
-# in experiments.jsonl); values are the CSVs ``python -m qld_ckan wave`` /
-# ``python -m qld_ckan wind`` produce.
+# CONFIG dicts pass through; values are the CSVs ``python -m qld_ckan wave`` /
+# ``python -m qld_ckan wind`` produce. Slugs match the qld_ckan BUOYS / STATIONS
+# registry exactly so the same name flows from CLI download → notebook config →
+# experiments.jsonl.
 NEIGHBOUR_FILES: dict[str, str] = {
     "brisbane":          "brisbane_wave_data_2015-2025.csv",
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
+    "gold-coast":        "gold-coast_wave_data_2015-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
 }
 
