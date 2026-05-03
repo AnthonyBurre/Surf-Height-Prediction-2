@@ -1,15 +1,22 @@
 """Regression metrics that ignore NaN and work on numpy or pandas inputs."""
 import numpy as np
-import pandas as pd
 
 
-def _align(y_true, y_pred) -> tuple[np.ndarray, np.ndarray]:
-    yt = np.asarray(y_true, dtype=float)
-    yp = np.asarray(y_pred, dtype=float)
-    if yt.shape != yp.shape:
-        raise ValueError(f"shape mismatch: y_true {yt.shape} vs y_pred {yp.shape}")
-    mask = ~(np.isnan(yt) | np.isnan(yp))
-    return yt[mask], yp[mask]
+def _align(*arrays) -> tuple[np.ndarray, ...]:
+    """Coerce inputs to float arrays and mask out any row with a NaN.
+
+    Accepts two or more arrays of identical shape; returns the same number
+    of arrays, all clipped to the rows where every input was finite.
+    """
+    cast = [np.asarray(a, dtype=float) for a in arrays]
+    shape = cast[0].shape
+    for a in cast[1:]:
+        if a.shape != shape:
+            raise ValueError(f"shape mismatch: {[a.shape for a in cast]}")
+    mask = np.ones(shape, dtype=bool)
+    for a in cast:
+        mask &= ~np.isnan(a)
+    return tuple(a[mask] for a in cast)
 
 
 def mae(y_true, y_pred) -> float:
@@ -35,15 +42,12 @@ def skill_score(y_true, y_pred, y_pred_baseline) -> float:
     squared error, and it's what matches the RMSE that regression models
     optimise.
     """
-    yt = np.asarray(y_true, dtype=float)
-    yp = np.asarray(y_pred, dtype=float)
-    yb = np.asarray(y_pred_baseline, dtype=float)
-    mask = ~(np.isnan(yt) | np.isnan(yp) | np.isnan(yb))
-    if not mask.any():
+    yt, yp, yb = _align(y_true, y_pred, y_pred_baseline)
+    if not yt.size:
         return float("nan")
-    mse_model = float(np.mean((yt[mask] - yp[mask]) ** 2))
-    mse_base = float(np.mean((yt[mask] - yb[mask]) ** 2))
-    if mse_base == 0:
+    mse_model = float(np.mean((yt - yp) ** 2))
+    mse_base = float(np.mean((yt - yb) ** 2))
+    if mse_base <= 1e-12:
         return float("nan")
     return 1.0 - mse_model / mse_base
 

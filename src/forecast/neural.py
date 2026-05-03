@@ -9,6 +9,8 @@ the previous ``seq_len`` feature vectors ending at *t*, and predict
 ``data.make_target``). No lag/rolling features are needed — the
 sequence model is expected to learn temporal structure itself.
 """
+import warnings
+
 import numpy as np
 import pandas as pd
 import torch
@@ -16,6 +18,45 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from .config import TARGET_COL
+
+
+def auto_device(preferred: str | None = None) -> str:
+    """Pick the best available torch device, honouring an explicit preference.
+
+    Order: explicit ``preferred`` → cuda → mps → cpu. Lives here (next to the
+    forecasters that consume it) so notebooks can do ``device =
+    fc.auto_device()`` without re-implementing the cascade.
+    """
+    if preferred:
+        return preferred
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _resolve_device(preferred: str | None) -> torch.device:
+    """Resolve ``preferred`` to a real torch.device, warning on a fallback.
+
+    A user passing ``device="cuda"`` on a CPU-only box would otherwise
+    silently train on CPU and wonder why fit time blew up. Warn once.
+    """
+    if preferred is None:
+        return torch.device(auto_device())
+    if preferred == "cuda" and not torch.cuda.is_available():
+        warnings.warn(
+            "device='cuda' requested but CUDA is unavailable; falling back to CPU.",
+            stacklevel=3,
+        )
+        return torch.device("cpu")
+    if preferred == "mps" and not torch.backends.mps.is_available():
+        warnings.warn(
+            "device='mps' requested but MPS is unavailable; falling back to CPU.",
+            stacklevel=3,
+        )
+        return torch.device("cpu")
+    return torch.device(preferred)
 
 
 class _WindowDataset(Dataset):
@@ -61,7 +102,7 @@ class _TorchSeqForecaster:
         self.lr = lr
         self.feature_cols = feature_cols
         self.target_col = target_col
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = _resolve_device(device)
         self.seed = seed
         self.verbose = verbose
         self._model: nn.Module | None = None
@@ -91,7 +132,13 @@ class _TorchSeqForecaster:
         self._x_mean = np.nanmean(Xa, axis=0)
         self._x_std = np.nanstd(Xa, axis=0) + 1e-8
         self._y_mean = float(np.nanmean(ya))
-        self._y_std = float(np.nanstd(ya) + 1e-8)
+        y_std = float(np.nanstd(ya))
+        if y_std == 0:
+            raise ValueError(
+                f"{type(self).__name__}.fit: target has zero variance — "
+                "predictions would be ill-defined. Check that y_train is not constant."
+            )
+        self._y_std = y_std + 1e-8
 
         Xs = (Xa - self._x_mean) / self._x_std
         ys = (ya - self._y_mean) / self._y_std

@@ -25,11 +25,8 @@ import time
 import warnings
 
 import pandas as pd
-import torch
-from sklearn.impute import SimpleImputer
 
 import forecast as fc
-from forecast.metrics import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -82,34 +79,17 @@ CONFIG: dict = {
 # ---------------------------------------------------------------------------
 
 
-def auto_device(preferred: str | None) -> str:
-    if preferred:
-        return preferred
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def load_wave(buoy: str, year_max: int) -> pd.DataFrame:
     df = fc.load_data(buoy=buoy)
     return df.loc[df.index.year <= year_max]
 
 
 def build_features(
-    wave: pd.DataFrame,
-    neighbour_series: dict[str, pd.Series],
+    merged: pd.DataFrame,
+    neighbour_cols: list[str],
     wind: pd.DataFrame | None,
     mode: str,
 ) -> pd.DataFrame:
-    merged = wave.copy()
-    neighbour_cols = []
-    for name, series in neighbour_series.items():
-        col = f"{name}_hsig_m"
-        merged[col] = series
-        neighbour_cols.append(col)
-
     if mode == "raw":
         # build_seq_features = encode_circular + add_time_features
         # neighbour cols ride through unchanged; wind cols appended below
@@ -149,22 +129,9 @@ def build_model(cfg: dict, device: str):
     raise ValueError(f"Unknown model {name!r}; choose lstm/gru/rnn/tcn")
 
 
-def _wind_tag(stations: list[str]) -> str:
-    return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
-
-
-def make_run_name(cfg: dict) -> str:
-    parts = [cfg["run_name"], cfg["model"], cfg["feature_mode"]]
-    if cfg["wind_stations"]:
-        parts.append("wind-" + _wind_tag(cfg["wind_stations"]))
-    if cfg["neighbours"]:
-        parts.append("+".join(cfg["neighbours"]))
-    return "_".join(parts)
-
-
 def main() -> None:
     cfg = CONFIG
-    device = auto_device(cfg["device"])
+    device = fc.auto_device(cfg["device"])
     print(f"device         : {device}")
 
     wave = load_wave(cfg["primary_buoy"], cfg["year_max"])
@@ -174,7 +141,8 @@ def main() -> None:
     # Restrict to wind overlap when wind is in play, so every training row has wind.
     wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
 
-    X = build_features(wave, neighbours, wind, cfg["feature_mode"])
+    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
+    X = build_features(merged, neighbour_cols, wind, cfg["feature_mode"])
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 
@@ -195,16 +163,20 @@ def main() -> None:
     worst = nan_pct.sort_values(ascending=False).head(3).round(2).to_dict()
     print(f"top NaN cols   : {worst}\n")
 
-    imp = SimpleImputer(strategy="mean")
-    X_tr_imp = pd.DataFrame(imp.fit_transform(X_tr), columns=X_tr.columns, index=X_tr.index)
-    X_te_imp = pd.DataFrame(imp.transform(X_te),     columns=X_te.columns, index=X_te.index)
+    X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
 
     persist = fc.evaluate(fc.PersistenceForecaster(), X_p_tr, y_tr, X_p_te, y_te)
     pp = persist.predictions
     print(f"persistence    : RMSE {persist.metrics['RMSE']:.4f}\n")
 
     model = build_model(cfg, device)
-    name = make_run_name(cfg)
+    name = fc.compose_run_name(
+        cfg["run_name"],
+        model=cfg["model"],
+        feature_mode=cfg["feature_mode"],
+        wind_stations=cfg["wind_stations"],
+        neighbours=cfg["neighbours"],
+    )
     print(f"=== {name}  (seq_len={cfg['seq_len']}, hidden={cfg['hidden']}, "
           f"layers={cfg['num_layers']}, epochs={cfg['epochs']}, lr={cfg['lr']}) ===")
 
@@ -214,7 +186,7 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"\nfit + predict  : {elapsed/60:.2f} min")
 
-    metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=pp)
+    metrics = fc.summarise(y_te.to_numpy(), preds, y_pred_baseline=pp)
     result = fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=model)
 
     print(f"\n{name}")
@@ -245,8 +217,7 @@ def main() -> None:
             },
         )
 
-    log = fc.read_log()
-    recent = log[log["name"].str.startswith(cfg["run_name"])].sort_values("timestamp").tail(8)
+    recent = fc.recent_runs(cfg["run_name"], n=8)
     if len(recent) > 1:
         print("\nrecent playground runs (most recent last):")
         for _, row in recent.iterrows():

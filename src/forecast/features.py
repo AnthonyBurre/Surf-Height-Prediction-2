@@ -21,8 +21,7 @@ class FeatureConfig:
 
     A single instance shared across an experiment guarantees that every
     model in that run sees the same feature set, making results directly
-    comparable. The defaults reproduce the configuration used in
-    forecast_v2 and the multi-buoy experiments.
+    comparable.
     """
     # Primary buoy lags/rolling/momentum (in 30-min steps)
     lag_steps: list[int]    = field(default_factory=lambda: [1, 2, 3, 6, 12, 24, 48, 96, 144])
@@ -38,7 +37,7 @@ def add_lag_features(
     columns: list[str],
     lags: list[int],
 ) -> pd.DataFrame:
-    """Append ``{col}_lag_{k}`` for every ``(col, k)`` in ``columns × lags``.
+    """Append ``{col}_lag_{k}`` for every ``(col, k)`` in ``columns x lags``.
 
     Lag ``k`` is in 30-minute steps (so ``k=2`` means 1 hour ago). A
     positive lag looks backward; the produced columns have NaN for the
@@ -117,7 +116,7 @@ def encode_circular(
         if name == "hour":
             values = df.index.hour + df.index.minute / 60.0
         elif name == "doy":
-            values = df.index.dayofyear.to_numpy(dtype=float)
+            values = df.index.day_of_year.to_numpy(dtype=float)
         elif name in df.columns:
             values = df[name].to_numpy()
         else:
@@ -206,7 +205,7 @@ def add_neighbour_features(
     for col in columns:
         out[col] = source_df[col]
         for lag in config.neighbour_lag_steps:
-            out[f"{col}_lag{lag}"] = source_df[col].shift(lag)
+            out[f"{col}_lag_{lag}"] = source_df[col].shift(lag)
         for w in config.neighbour_roll_windows:
             r = source_df[col].shift(1).rolling(window=w, min_periods=max(1, w // 2))
             out[f"{col}_roll{w}_mean"] = r.mean()
@@ -225,3 +224,25 @@ def build_seq_features(df: pd.DataFrame) -> pd.DataFrame:
         encode_circular,
         periods={"peak_dir_deg": 360.0, "hour": 24.0, "doy": 365.25},
     )
+
+
+def assemble_inputs(
+    wave: pd.DataFrame,
+    neighbours: dict[str, pd.Series],
+    wind: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Merge neighbour series into wave; return ``(merged, neighbour_cols, wind_cols)``.
+
+    Each neighbour series becomes a ``{name}_hsig_m`` column on a copy of
+    ``wave``. Wind columns aren't merged (they have a different cadence and
+    are usually treated separately by the caller); their names are returned
+    so downstream feature engineering can target them by group.
+    """
+    merged = wave.copy()
+    neighbour_cols: list[str] = []
+    for name, series in neighbours.items():
+        col = f"{name}_hsig_m"
+        merged[col] = series
+        neighbour_cols.append(col)
+    wind_cols = list(wind.columns) if wind is not None else []
+    return merged, neighbour_cols, wind_cols

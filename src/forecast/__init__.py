@@ -4,10 +4,10 @@ Top-level exports cover the common workflow: load data, build target,
 split, engineer features, fit baselines or regressors, score.
 
 Sequence-model forecasters (``SimpleRNNForecaster``, ``GRUForecaster``,
-``LSTMForecaster``, ``TCNForecaster``) require ``torch`` and are loaded
-lazily — ``import forecast`` stays light, and the first reference to one
-of those names triggers the torch import (with a clear ImportError if
-torch is not installed).
+``LSTMForecaster``, ``TCNForecaster``) plus ``auto_device`` require
+``torch`` and are loaded lazily — ``import forecast`` stays light, and
+the first reference to one of those names triggers the torch import
+(with a clear ImportError if torch is not installed).
 
 Example
 -------
@@ -41,25 +41,37 @@ from .data import (
     make_target,
     restrict_to_overlap,
 )
-from .evaluate import EvaluationResult, compare, evaluate
-from .experiments import evaluate_and_log, log_run, read_log
+from .evaluate import EvaluationResult, compare, evaluate, mean_impute
+from .experiments import (
+    compose_run_name,
+    evaluate_and_log,
+    log_run,
+    read_log,
+    recent_runs,
+    wind_tag,
+)
 from .features import (
     FeatureConfig,
     add_lag_features,
     add_momentum,
     add_neighbour_features,
     add_rolling_features,
+    assemble_inputs,
     build_buoy_features,
     build_seq_features,
     encode_circular,
 )
 from .metrics import bias, mae, rmse, skill_score, summarise
 
+# Names defined in .neural that should be lazy-loaded so plain
+# ``import forecast`` doesn't drag torch in. ``auto_device`` belongs
+# here for the same reason — it inspects the live torch runtime.
 _NEURAL_NAMES = frozenset({
     "GRUForecaster",
     "LSTMForecaster",
     "SimpleRNNForecaster",
     "TCNForecaster",
+    "auto_device",
 })
 
 
@@ -68,6 +80,7 @@ def __getattr__(name: str):
         from . import neural
         return getattr(neural, name)
     raise AttributeError(f"module 'forecast' has no attribute {name!r}")
+
 
 __all__ = [
     # config
@@ -92,6 +105,7 @@ __all__ = [
     "add_momentum",
     "add_neighbour_features",
     "add_rolling_features",
+    "assemble_inputs",
     "build_buoy_features",
     "build_seq_features",
     "encode_circular",
@@ -99,11 +113,12 @@ __all__ = [
     "ClimatologyHourForecaster",
     "PersistenceForecaster",
     "SeasonalNaiveForecaster",
-    # neural
+    # neural (lazy)
     "GRUForecaster",
     "LSTMForecaster",
     "SimpleRNNForecaster",
     "TCNForecaster",
+    "auto_device",
     # metrics
     "bias",
     "mae",
@@ -114,8 +129,12 @@ __all__ = [
     "EvaluationResult",
     "compare",
     "evaluate",
+    "mean_impute",
     # experiments
+    "compose_run_name",
     "evaluate_and_log",
     "log_run",
     "read_log",
+    "recent_runs",
+    "wind_tag",
 ]

@@ -142,26 +142,36 @@ def evaluate_and_log(
     X_test: pd.DataFrame,
     y_test: pd.Series,
     *,
-    data_sources: list[str],
+    data_sources: list[str] | None = None,
     name: str | None = None,
     baseline_preds: np.ndarray | None = None,
     extra: dict | None = None,
     path: str | Path = DEFAULT_LOG,
+    log: bool = True,
 ) -> EvaluationResult:
-    """Convenience: ``evaluate(...)`` then ``log_run(...)`` in one call."""
+    """``evaluate(...)`` then optionally ``log_run(...)`` in one call.
+
+    Pass ``log=False`` to skip the JSONL write — lets callers thread one
+    function through both "real run" and "smoke run" paths without
+    if/else branching at every callsite. ``data_sources`` is required
+    when ``log=True``.
+    """
     result = evaluate(
         model, X_train, y_train, X_test, y_test,
         name=name, baseline_preds=baseline_preds,
     )
-    log_run(
-        result,
-        data_sources=data_sources,
-        train_index=X_train.index,
-        test_index=X_test.index,
-        n_features=X_train.shape[1],
-        extra=extra,
-        path=path,
-    )
+    if log:
+        if data_sources is None:
+            raise ValueError("evaluate_and_log: data_sources is required when log=True")
+        log_run(
+            result,
+            data_sources=data_sources,
+            train_index=X_train.index,
+            test_index=X_test.index,
+            n_features=X_train.shape[1],
+            extra=extra,
+            path=path,
+        )
     return result
 
 
@@ -171,3 +181,57 @@ def read_log(path: str | Path = DEFAULT_LOG) -> pd.DataFrame:
     if not path.exists() or path.stat().st_size == 0:
         return pd.DataFrame()
     return pd.read_json(path, lines=True)
+
+
+def recent_runs(
+    prefix: str,
+    n: int = 10,
+    *,
+    path: str | Path = DEFAULT_LOG,
+) -> pd.DataFrame:
+    """Return the most-recent ``n`` log rows whose ``name`` starts with ``prefix``.
+
+    Sorted ascending by timestamp so the most recent row is the last one.
+    Returns an empty DataFrame if the log is empty or has no matching name
+    column (e.g. on first use).
+    """
+    log = read_log(path)
+    if log.empty or "name" not in log.columns:
+        return log
+    return log[log["name"].str.startswith(prefix)].sort_values("timestamp").tail(n)
+
+
+def wind_tag(stations: list[str]) -> str:
+    """Compact label from a list of station slugs (e.g. ``mountain-creek`` → ``mc``)."""
+    return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
+
+
+def compose_run_name(
+    prefix: str,
+    *,
+    model: str | None = None,
+    feature_mode: str | None = None,
+    wind_stations: list[str] = (),
+    neighbours: list[str] = (),
+    neighbour_chars: int | None = None,
+) -> str:
+    """Build a stable, descriptive run name from playground CONFIG fields.
+
+    Components are appended only when truthy, so calls from linear (no
+    ``model``/``feature_mode``) and seq (both supplied) reuse the same
+    helper. ``neighbour_chars`` truncates each neighbour slug to that many
+    characters before joining (linear uses 4); ``None`` keeps full names.
+    """
+    parts = [prefix]
+    if model:
+        parts.append(model)
+    if feature_mode:
+        parts.append(feature_mode)
+    if wind_stations:
+        parts.append("wind-" + wind_tag(wind_stations))
+    if neighbours:
+        if neighbour_chars is not None:
+            parts.append("+".join(n[:neighbour_chars] for n in neighbours))
+        else:
+            parts.append("+".join(neighbours))
+    return "_".join(parts)

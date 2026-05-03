@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import HORIZON_STEPS, TARGET_COL
+from .features import encode_circular
 
 # Resolve relative to the repo root, not the caller's cwd, so notebooks and
 # scripts both find the file without path juggling.
@@ -125,10 +126,6 @@ def load_wind(
     """
     if not stations:
         return None
-    # Local import: ``encode_circular`` lives in features.py and importing it
-    # at module top would create a data ↔ features cycle.
-    from .features import encode_circular
-
     frames: list[pd.DataFrame] = []
     for s in stations:
         if s not in WIND_FILES:

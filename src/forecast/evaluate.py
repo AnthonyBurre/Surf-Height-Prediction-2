@@ -4,16 +4,17 @@ The harness handles NaN rows so every model sees a consistent training
 subset regardless of how many lag/rolling features it uses.
 """
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 import numpy as np
 import pandas as pd
+from sklearn.impute import SimpleImputer
 
 from .metrics import summarise
 
 
 class Forecaster(Protocol):
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> Any: ...
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> Self: ...
     def predict(self, X: pd.DataFrame) -> np.ndarray: ...
 
 
@@ -75,3 +76,21 @@ def compare(results: list[EvaluationResult]) -> pd.DataFrame:
     if "RMSE" in df.columns:
         df = df.sort_values("RMSE")
     return df
+
+
+def mean_impute(
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fit a column-wise mean imputer on train, apply to both frames.
+
+    Sequence models in particular need NaN-free inputs: with seq_len=48 and
+    any column carrying a few % NaN, almost every window contains a NaN and
+    training collapses. Linear/tree models also benefit when chained with
+    sklearn estimators that reject NaN.
+    """
+    imp = SimpleImputer(strategy="mean")
+    return (
+        pd.DataFrame(imp.fit_transform(X_train), columns=X_train.columns, index=X_train.index),
+        pd.DataFrame(imp.transform(X_test),      columns=X_test.columns,  index=X_test.index),
+    )
