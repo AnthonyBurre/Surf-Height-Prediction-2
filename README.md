@@ -232,10 +232,6 @@ See [LICENSE](LICENSE).
 
     Big-leverage modelling changes
 
-  1. Train sequence models on the persistence residual, not the absolute target. The LSTM/GRU/RNN runs in experiments.jsonl all sit between −35% and −75% skill — they're  
-  worse than just calling tomorrow == today. The HGB residual-target trick in notebooks/linear_playground.py:282 already exists; lift it into
-  _TorchSeqForecaster.fit/predict (src/forecast/neural.py:81). The model then has to learn 0 by default, can't lose to persistence catastrophically, and gets all of its   
-  capacity to model the delta. This single change typically explains ~80% of "neural net underperforms persistence" pain.
   2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
   10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  
   have a publishable model.

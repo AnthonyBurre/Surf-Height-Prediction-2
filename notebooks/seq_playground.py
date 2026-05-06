@@ -55,7 +55,7 @@ CONFIG: dict = {
     # shared seq-model hyperparams
     "seq_len":       48,          # 48 × 30 min = 24 h of context
     "hidden":        128,
-    "num_layers":    2,
+    "num_layers":    4,
     "epochs":        30,
     "batch_size":    512,
     "lr":            1e-3,

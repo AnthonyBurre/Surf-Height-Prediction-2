@@ -93,6 +93,7 @@ class _TorchSeqForecaster:
         device: str | None = None,
         seed: int = 42,
         verbose: bool = False,
+        residual: bool = True,
     ) -> None:
         self.seq_len = seq_len
         self.hidden = hidden
@@ -105,6 +106,7 @@ class _TorchSeqForecaster:
         self.device = _resolve_device(device)
         self.seed = seed
         self.verbose = verbose
+        self.residual = residual
         self._model: nn.Module | None = None
         self._x_mean: np.ndarray | None = None
         self._x_std: np.ndarray | None = None
@@ -125,6 +127,8 @@ class _TorchSeqForecaster:
 
         Xa = self._select(X)
         ya = y.to_numpy(dtype=np.float32)
+        if self.residual:
+            ya = ya - X[self.target_col].to_numpy(dtype=np.float32)
 
         # NaN-aware: a single NaN in any column otherwise poisons the mean and
         # standardised tensor, after which the per-batch valid-row mask
@@ -172,7 +176,8 @@ class _TorchSeqForecaster:
                 epoch_batches += 1
             if self.verbose and epoch_batches:
                 rmse = (epoch_loss / epoch_batches) ** 0.5 * self._y_std
-                print(f"  epoch {epoch + 1:3d}/{self.epochs}  train RMSE ≈ {rmse:.4f}")
+                label = "residual RMSE" if self.residual else "train RMSE"
+                print(f"  epoch {epoch + 1:3d}/{self.epochs}  {label} ≈ {rmse:.4f}")
 
         self._model = model
         if self.seq_len > 1:
@@ -212,7 +217,10 @@ class _TorchSeqForecaster:
         if len(preds) < len(X):
             pad = np.full(len(X) - len(preds), np.nan, dtype=preds.dtype)
             preds = np.concatenate([pad, preds])
-        return preds[-len(X):]
+        preds = preds[-len(X):]
+        if self.residual:
+            preds = preds + X[self.target_col].to_numpy(dtype=np.float32)
+        return preds
 
 
 class _RNNHead(nn.Module):
