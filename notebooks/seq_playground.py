@@ -50,13 +50,13 @@ CONFIG: dict = {
     "feature_mode": "engineered",
 
     # --- model ---
-    "model":         "gru",       # "lstm", "gru", "rnn", "tcn"
+    "model":         "rnn",       # "lstm", "gru", "rnn", "tcn"
 
     # shared seq-model hyperparams
-    "seq_len":       48,          # 48 × 30 min = 24 h of context
+    "seq_len":       96,          # 48 × 30 min = 24 h of context
     "hidden":        128,
     "num_layers":    4,
-    "epochs":        30,
+    "epochs":        10,
     "batch_size":    512,
     "lr":            1e-3,
     "seed":          42,

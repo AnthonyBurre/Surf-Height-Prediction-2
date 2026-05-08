@@ -43,11 +43,11 @@ def add_lag_features(
     positive lag looks backward; the produced columns have NaN for the
     first ``k`` rows where history is unavailable.
     """
-    out = df.copy()
+    new_cols: dict[str, pd.Series] = {}
     for col in columns:
         for lag in lags:
-            out[f"{col}_lag_{lag}"] = df[col].shift(lag)
-    return out
+            new_cols[f"{col}_lag_{lag}"] = df[col].shift(lag)
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
 
 def add_rolling_features(
@@ -74,18 +74,18 @@ def add_rolling_features(
        is ``0.25·hsig_m[t] + 0.75·(past)`` — nearly redundant with the raw
        feature already in the frame. The shifted version is independent.
     """
-    out = df.copy()
     valid_stats = {"mean", "std", "min", "max", "median"}
     unknown = set(stats) - valid_stats
     if unknown:
         raise ValueError(f"Unknown stats: {sorted(unknown)}; valid: {sorted(valid_stats)}")
 
+    new_cols: dict[str, pd.Series] = {}
     for col in columns:
         for w in windows:
             r = df[col].shift(1).rolling(window=w, min_periods=max(1, w // 2))
             for stat in stats:
-                out[f"{col}_roll{w}_{stat}"] = getattr(r, stat)()
-    return out
+                new_cols[f"{col}_roll{w}_{stat}"] = getattr(r, stat)()
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
 
 def encode_circular(
@@ -142,11 +142,11 @@ def add_momentum(
     Captures the rate of change / trend direction over multiple timescales.
     ``d`` is in 30-minute steps.
     """
-    out = df.copy()
+    new_cols: dict[str, pd.Series] = {}
     for col in columns:
         for d in deltas:
-            out[f"{col}_delta_{d}"] = df[col] - df[col].shift(d)
-    return out
+            new_cols[f"{col}_delta_{d}"] = df[col] - df[col].shift(d)
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
 
 def build_buoy_features(
@@ -201,16 +201,16 @@ def add_neighbour_features(
     """
     if config is None:
         config = FeatureConfig()
-    out = X.copy()
+    new_cols: dict[str, pd.Series] = {}
     for col in columns:
-        out[col] = source_df[col]
+        new_cols[col] = source_df[col]
         for lag in config.neighbour_lag_steps:
-            out[f"{col}_lag_{lag}"] = source_df[col].shift(lag)
+            new_cols[f"{col}_lag_{lag}"] = source_df[col].shift(lag)
         for w in config.neighbour_roll_windows:
             r = source_df[col].shift(1).rolling(window=w, min_periods=max(1, w // 2))
-            out[f"{col}_roll{w}_mean"] = r.mean()
-            out[f"{col}_roll{w}_std"]  = r.std()
-    return out
+            new_cols[f"{col}_roll{w}_mean"] = r.mean()
+            new_cols[f"{col}_roll{w}_std"]  = r.std()
+    return pd.concat([X, pd.DataFrame(new_cols, index=X.index)], axis=1)
 
 
 def build_seq_features(df: pd.DataFrame) -> pd.DataFrame:
