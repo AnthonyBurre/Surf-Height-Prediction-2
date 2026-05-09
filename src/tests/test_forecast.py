@@ -245,6 +245,25 @@ def test_restrict_to_overlap_clips_to_neighbour_intersection():
         assert s.index.max() == idx[7]
 
 
+def test_restrict_to_overlap_wind_window_wins_over_neighbours():
+    """When wind is present its valid range defines the window even if it
+    is tighter than the neighbour intersection. A regression here would
+    silently drop most of the training set."""
+    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="UTC")
+    wave = pd.DataFrame({"hsig_m": np.arange(10, dtype=float)}, index=idx)
+    # Neighbour valid 1..8 — would normally clip to 1..8.
+    nb = pd.Series([np.nan, *range(1, 9), np.nan], index=idx)
+    # Wind only has data in rows 4..6 — tighter; should win.
+    wind = pd.DataFrame({"wind_speed_ms": [np.nan]*4 + [3.0, 3.1, 3.2] + [np.nan]*3}, index=idx)
+
+    wave_out, nb_out, wind_out = restrict_to_overlap(wave, {"a": nb}, wind=wind)
+
+    assert wave_out.index.min() == idx[4]
+    assert wave_out.index.max() == idx[6]
+    assert nb_out["a"].index.min() == idx[4]
+    assert wind_out.index.min() == idx[4]
+
+
 # ---------------------------------------------------------------------------
 # baselines
 # ---------------------------------------------------------------------------

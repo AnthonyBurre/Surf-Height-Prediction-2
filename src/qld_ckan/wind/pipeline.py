@@ -43,6 +43,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # and DD/MM/YYYY is interpreted day-first as intended. Without dayfirst,
     # pandas defaults to month-first and silently coerces ~95% of a DD/MM year
     # to NaT.
+    n_raw = len(df)
     timestamps = pd.to_datetime(
         df["Date"].astype(str).str[:10] + " " + df["Time"],
         format="mixed",
@@ -50,6 +51,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         errors="coerce",
     )
     df = df.assign(datetime_utc=timestamps).dropna(subset=["datetime_utc"])
+    n_valid_ts = len(df)
 
     # Keep only the renameable wind columns; pollutant / temperature fields
     # are out of scope for this module and their presence varies by year.
@@ -60,6 +62,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # Year-boundary overlaps occasionally produce duplicate timestamps; keep
     # the first so reindex has a unique axis to align against.
     df = df[~df.index.duplicated(keep="first")]
+    n_unique = len(df)
     # CKAN can return numeric fields as strings; coerce once here so
     # downstream consumers never need to think about dtypes.
     df = df.apply(pd.to_numeric, errors="coerce")
@@ -67,6 +70,10 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.reindex(full_index)
     df.index.name = "datetime_utc"
     df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    logger.info(
+        "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
+        n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,
+    )
     return df
 
 

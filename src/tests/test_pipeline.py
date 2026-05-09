@@ -68,14 +68,37 @@ def test_clean_preserves_values(raw_frame, standard_rows, ts_utc):
     assert result.loc[ts_utc("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
 
 
-def test_clean_replaces_sentinel_with_nan(raw_frame, standard_rows, ts_utc):
-    standard_rows[0]["Hs"] = -99.9
-    standard_rows[1]["SST"] = -99.9
+def test_clean_index_is_utc_with_aest_offset_applied(raw_frame, standard_rows):
+    """Source timestamps are naive AEST (UTC+10); after clean the index must
+    be tz-aware UTC and the rows must have shifted back by 10h. Asserting the
+    tz directly catches a regression that drops the tz_convert step (the
+    index name 'datetime_utc' is just a string and would still match)."""
     result = clean(raw_frame(standard_rows))
-    assert np.isnan(result.loc[ts_utc("2017-01-01 00:00:00"), "hsig_m"])
-    assert np.isnan(result.loc[ts_utc("2017-01-01 00:30:00"), "sst_c"])
-    # other values unchanged
-    assert result.loc[ts_utc("2017-01-01 00:00:00"), "sst_c"] == pytest.approx(25.0)
+    assert str(result.index.tz) == "UTC"
+    # 2017-01-01 00:00 AEST → 2016-12-31 14:00 UTC
+    assert result.index[0] == pd.Timestamp("2016-12-31 14:00", tz="UTC")
+
+
+@pytest.mark.parametrize(
+    "raw_col, clean_col",
+    [
+        ("Hs", "hsig_m"),
+        ("Hmax", "hmax_m"),
+        ("Tz", "tz_s"),
+        ("Tp", "tp_s"),
+        ("Peak Direction", "peak_dir_deg"),
+        ("SST", "sst_c"),
+    ],
+)
+def test_clean_replaces_sentinel_with_nan(raw_col, clean_col, raw_frame, standard_rows, ts_utc):
+    """Every measurement column must honour the -99.9 sentinel — a missed
+    column lets garbage through as a real reading (e.g. peak_dir_deg=-99.9
+    survives encode_circular as a normal sin/cos pair)."""
+    standard_rows[0][raw_col] = -99.9
+    result = clean(raw_frame(standard_rows))
+    assert np.isnan(result.loc[ts_utc("2017-01-01 00:00:00"), clean_col])
+    # other measurement columns at the same row unchanged
+    assert not np.isnan(result.loc[ts_utc("2017-01-01 00:30:00"), clean_col])
 
 
 def test_clean_coerces_string_numerics(raw_frame, standard_rows, ts_utc):
