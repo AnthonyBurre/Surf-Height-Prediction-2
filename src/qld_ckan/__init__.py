@@ -76,8 +76,12 @@ def fetch_all_years(resource_ids, fetch_one):
     ``fetch_one`` is expected to raise ``requests.HTTPError`` on transport
     failure; a 404 is treated as "this year's resource is missing" and the
     loop continues. Anything else re-raises.
+
+    Emits a final WARNING listing any years that were skipped — a stale
+    resource ID otherwise produces a silent year-shaped hole in the dataset.
     """
     frames = []
+    missing: list[int] = []
     for year, rid in resource_ids.items():
         logger.info("Fetching %d...", year)
         try:
@@ -86,8 +90,14 @@ def fetch_all_years(resource_ids, fetch_one):
         except requests.exceptions.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 logger.warning("Skipping %d: resource not found", year)
+                missing.append(year)
             else:
                 raise
+    if missing:
+        logger.warning(
+            "Fetched %d/%d years; missing: %s",
+            len(frames), len(resource_ids), missing,
+        )
     return frames
 
 

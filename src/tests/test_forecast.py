@@ -12,7 +12,7 @@ from forecast import (
     add_neighbour_features,
     add_rolling_features,
     bias,
-    build_mooloolaba_features,
+    build_buoy_features,
     build_seq_features,
     chronological_split,
     compare,
@@ -22,6 +22,7 @@ from forecast import (
     make_target,
     restrict_to_overlap,
     rmse,
+    scale_features,
     skill_score,
     summarise,
 )
@@ -183,11 +184,11 @@ def test_encode_circular_rejects_unknown_name(synthetic_df):
 # ---------------------------------------------------------------------------
 
 
-def test_build_mooloolaba_features_includes_each_feature_family(synthetic_df):
-    """build_mooloolaba_features composes circular + lag + rolling + momentum.
+def test_build_buoy_features_includes_each_feature_family(synthetic_df):
+    """build_buoy_features composes circular + lag + rolling + momentum.
     Assert by family rather than exact column list so the test survives
     FeatureConfig defaults shifting."""
-    out = build_mooloolaba_features(synthetic_df(200))
+    out = build_buoy_features(synthetic_df(200))
     cols = set(out.columns)
     # circular: peak_dir_deg replaced; hour/doy added
     assert "peak_dir_deg" not in cols
@@ -243,6 +244,25 @@ def test_restrict_to_overlap_clips_to_neighbour_intersection():
     for s in nb_out.values():
         assert s.index.min() == idx[3]
         assert s.index.max() == idx[7]
+
+
+def test_restrict_to_overlap_wind_window_wins_over_neighbours():
+    """When wind is present its valid range defines the window even if it
+    is tighter than the neighbour intersection. A regression here would
+    silently drop most of the training set."""
+    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="UTC")
+    wave = pd.DataFrame({"hsig_m": np.arange(10, dtype=float)}, index=idx)
+    # Neighbour valid 1..8 — would normally clip to 1..8.
+    nb = pd.Series([np.nan, *range(1, 9), np.nan], index=idx)
+    # Wind only has data in rows 4..6 — tighter; should win.
+    wind = pd.DataFrame({"wind_speed_ms": [np.nan]*4 + [3.0, 3.1, 3.2] + [np.nan]*3}, index=idx)
+
+    wave_out, nb_out, wind_out = restrict_to_overlap(wave, {"a": nb}, wind=wind)
+
+    assert wave_out.index.min() == idx[4]
+    assert wave_out.index.max() == idx[6]
+    assert nb_out["a"].index.min() == idx[4]
+    assert wind_out.index.min() == idx[4]
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +402,69 @@ def test_compare_sorts_by_rmse(synthetic_df):
     r2 = evaluate(ClimatologyHourForecaster(horizon_steps=4), Xtr, ytr, Xte, yte, name="b")
     table = compare([r1, r2])
     assert list(table.index) == sorted(table.index, key=lambda m: table.loc[m, "RMSE"])
+
+
+# ---------------------------------------------------------------------------
+# scale_features
+# ---------------------------------------------------------------------------
+
+
+def _scale_frames():
+    idx_tr = pd.date_range("2020-01-01", periods=50, freq="30min", name="datetime_utc")
+    idx_te = pd.date_range("2020-02-01", periods=20, freq="30min", name="datetime_utc")
+    cols = ["hsig_m", "tp_s", "peak_dir_deg_sin", "peak_dir_deg_cos"]
+    rng = np.random.default_rng(0)
+    Xtr = pd.DataFrame(
+        {
+            "hsig_m": rng.normal(2.0, 0.5, 50),
+            "tp_s": rng.normal(9.0, 2.0, 50),
+            "peak_dir_deg_sin": rng.uniform(-1, 1, 50),
+            "peak_dir_deg_cos": rng.uniform(-1, 1, 50),
+        },
+        index=idx_tr,
+    )[cols]
+    # Test frame deliberately shifted to a different distribution.
+    Xte = pd.DataFrame(
+        {
+            "hsig_m": rng.normal(5.0, 0.5, 20),
+            "tp_s": rng.normal(15.0, 2.0, 20),
+            "peak_dir_deg_sin": rng.uniform(-1, 1, 20),
+            "peak_dir_deg_cos": rng.uniform(-1, 1, 20),
+        },
+        index=idx_te,
+    )[cols]
+    return Xtr, Xte
+
+
+def test_scale_features_leaves_circular_columns_untouched():
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="robust")
+    for col in ("peak_dir_deg_sin", "peak_dir_deg_cos"):
+        pd.testing.assert_series_equal(Str[col], Xtr[col])
+        pd.testing.assert_series_equal(Ste[col], Xte[col])
+
+
+def test_scale_features_centres_non_circular_train_columns():
+    Xtr, _ = _scale_frames()
+    Str, _ = scale_features(Xtr, Xtr, method="robust")
+    # RobustScaler centres on the median -> scaled train median ~ 0.
+    assert Str["hsig_m"].median() == pytest.approx(0.0, abs=1e-9)
+    assert Str["tp_s"].median() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_scale_features_preserves_columns_order_and_index():
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="standard")
+    assert list(Str.columns) == list(Xtr.columns)
+    assert list(Ste.columns) == list(Xte.columns)
+    pd.testing.assert_index_equal(Str.index, Xtr.index)
+    pd.testing.assert_index_equal(Ste.index, Xte.index)
+
+
+def test_scale_features_applies_train_stats_to_test():
+    """Test frame is transformed with train-fitted stats, not its own."""
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="robust")
+    # Test distribution sits well above train -> scaled test stays far from 0.
+    assert Ste["hsig_m"].median() > 1.0
+    assert Ste["tp_s"].median() > 1.0

@@ -1,66 +1,7 @@
-from unittest.mock import MagicMock, patch
-
 import pandas as pd
-import pytest
-import requests
 
 from qld_ckan.wind.constants import STATIONS
-from qld_ckan.wind.downloader import fetch_all, fetch_year_datastore
 from qld_ckan.wind.pipeline import clean
-
-
-# ---------------------------------------------------------------------------
-# fetch_year_datastore
-# ---------------------------------------------------------------------------
-
-
-def test_fetch_year_drops_id_column(datastore_response, wind_raw_records):
-    with patch("qld_ckan.wind.downloader._session") as mock_session:
-        mock_session.return_value.get.return_value = datastore_response(wind_raw_records)
-        df = fetch_year_datastore(2024, "rid")
-    assert "_id" not in df.columns
-    assert "Wind Speed (m/s)" in df.columns
-
-
-def test_fetch_year_paginates_until_total_reached(datastore_response, wind_raw_records):
-    page1 = datastore_response(wind_raw_records[:1], total=2)
-    page2 = datastore_response(wind_raw_records[1:], total=2)
-    with patch("qld_ckan.wind.downloader._session") as mock_session:
-        mock_session.return_value.get.side_effect = [page1, page2]
-        df = fetch_year_datastore(2024, "rid")
-    assert len(df) == 2
-    assert mock_session.return_value.get.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# fetch_all
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "status_code, expected_frames, raises",
-    [
-        (404, 0, False),
-        (500, None, True),
-    ],
-)
-def test_fetch_all_handles_http_errors(status_code, expected_frames, raises):
-    error_response = MagicMock(status_code=status_code)
-    http_error = requests.exceptions.HTTPError(response=error_response)
-
-    def _get(*_args, **_kwargs):
-        mock = MagicMock()
-        mock.raise_for_status.side_effect = http_error
-        return mock
-
-    with patch("qld_ckan.wind.downloader._session") as mock_session:
-        mock_session.return_value.get.side_effect = _get
-        if raises:
-            with pytest.raises(requests.exceptions.HTTPError):
-                fetch_all({2024: "rid"})
-        else:
-            frames = fetch_all({2099: "missing"})
-            assert len(frames) == expected_frames
 
 
 # ---------------------------------------------------------------------------

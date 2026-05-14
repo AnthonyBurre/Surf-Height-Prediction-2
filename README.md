@@ -4,7 +4,7 @@ Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wav
 
 Three installed Python packages back it:
 
-- **`qld_ckan`** — ETL. Downloads yearly records from the QLD Government CKAN Datastore API, unifies schema, and writes a cleaned CSV on a per-source grid. Two sub-packages: `qld_ckan.wave` (wave-buoy network, 30-minute grid) and `qld_ckan.wind` (AWS station 10 m wind, hourly grid). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
+- **`qld_ckan`** — ETL. Downloads yearly records from the QLD Government CKAN Datastore API, unifies schema, and writes a cleaned CSV on a per-source grid. Two sub-packages: `qld_ckan.wave` (wave-buoy network, 30-minute grid) and `qld_ckan.wind` (AWS station 10 meter wind, hourly grid). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
 - **`viz`** — source-agnostic plotting, organised by pipeline stage. Shared time-series primitives (single-source, multi-source overlays, autocorrelation), post-download EDA heatmaps (feature × horizon, cross-source), and post-modeling diagnostics (model comparison, residual analysis).
 - **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
 
@@ -61,9 +61,9 @@ All modelling code lives in `src/forecast/` and exposes a flat import surface:
 ```python
 import forecast as fc
 
-df = fc.load_data()                              # tz-aware, 30-min grid
+df = fc.load_data(buoy="mooloolaba")             # tz-aware, 30-min grid
 y  = fc.make_target(df)                          # y.loc[t] == hsig_m[t + 12h]
-X  = fc.build_mooloolaba_features(df)            # lag + rolling + momentum + time features
+X  = fc.build_buoy_features(df)                  # lag + rolling + momentum + time features
 X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
 
 result = fc.evaluate_and_log(
@@ -76,14 +76,27 @@ print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ..., "SkillVsBaseline
 
 ### Feature engineering
 
-`fc.build_mooloolaba_features(df)` produces the full primary-buoy feature matrix (circular encoding, time features, lags, rolling stats, momentum). Neighbour buoys are appended with `fc.add_neighbour_features(X, source_df, columns)`. Both accept a `FeatureConfig` to tune lag steps, rolling windows, and delta steps:
+`fc.build_buoy_features(df)` produces the full primary-buoy feature matrix (circular encoding, time features, lags, rolling stats, momentum) for any QLD wave buoy. Neighbour buoys are appended with `fc.add_neighbour_features(X, source_df, columns)`. Both accept a `FeatureConfig` to tune lag steps, rolling windows, and delta steps:
 
 ```python
 cfg = fc.FeatureConfig(lag_steps=[1, 2, 6, 24], roll_windows=[12, 48])
-X = fc.build_mooloolaba_features(df, config=cfg)
+X = fc.build_buoy_features(df, config=cfg)
 ```
 
 For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circular encoding and time features only, no pre-built lags (the model windows its own input).
+
+### Feature scaling
+
+Feature magnitudes span orders of scale — `tp_s` in seconds, `hsig_m` in metres, sin/cos columns already in `[-1, 1]`. Penalised linear models care: an unscaled `alpha` shrinks large-magnitude coefficients unevenly. Scaling is fit on train only and applied to both splits, so no test statistics leak.
+
+```python
+X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
+X_tr_s, X_te_s = fc.scale_features(X_tr_imp, X_te_imp, method="robust")  # or "standard"
+```
+
+`fc.scale_features` defaults to `RobustScaler` (median/IQR) — wave data is heavy-tailed, so storm-spike outliers would inflate a standard-deviation scale. **Circular `*_sin`/`*_cos` columns are passed through untouched**: they are already in `[-1, 1]`, and scaling a sin/cos pair independently would distort the unit-circle geometry. Tree models (HGB) are scale-invariant and are left on the raw matrix.
+
+Sequence models scale internally instead — `_TorchSeqForecaster` standardises its own input channels and target (fit on train), selectable per the `scaler` argument (`"standard"` mean/std, or `"robust"` median/IQR), so they take the unscaled `build_seq_features` frame directly.
 
 ### Available forecasters
 
@@ -112,25 +125,36 @@ All scripts are plain `.py` files — run directly:
 
 ## Results
 
-All runs use a chronological 80/20 split. Skill score is vs. persistence on the same test window. Persistence baselines differ across windows (the full-history split, the 2024-2025 neighbour-buoy overlap, and the 2015-2024 wind-overlap window) so RMSEs are only directly comparable within the same window.
+All runs use a chronological 80/20 split on the **2015-2024** window — the span where both wind stations have data. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; the full set of logged runs (other windows, feature combinations, and the sequence-model sweep) is in `experiments.jsonl`.
 
-| Model | Data sources | Window | RMSE | Skill |
-|-------|-------------|--------|------|-------|
-| Persistence (baseline) | Mooloolaba | 2015-2025 | 0.289 | — |
-| Ridge | Mooloolaba | 2015-2025 | 0.265 | +11.3% |
-| HGB (persistence-residual target) | Mooloolaba | 2015-2025 | 0.282 | +5.2% |
-| Ridge + HGB ensemble | Mooloolaba | 2015-2025 | 0.277 | +8.2% |
-| Lasso | Mooloolaba + Brisbane | 2015-2025 | 0.267 | +15.5% |
-| LSTM (15 epochs, seq_len=48, 2 layers) | Mooloolaba + Brisbane | 2015-2025 | 0.362 | −55.2% |
-| Persistence (baseline) | Mooloolaba | 2015-2024 | 0.265 | — |
-| Ridge | Mooloolaba | 2015-2024 | 0.253 | +9.0% |
-| Ridge + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.9% |
-| Lasso + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.6% |
-| Persistence (baseline) | Mooloolaba | 2024-2025 | 0.272 | — |
-| Ridge | Mooloolaba + 3 neighbours | 2024-2025 | 0.244 | +19.5% |
-| HGB | Mooloolaba + 3 neighbours | 2024-2025 | 0.258 | +10.0% |
+| Model | Data sources | RMSE (cm) | Skill |
+|-------|-------------|------|-------|
+| Persistence (baseline) | Mooloolaba | 26.5 | — |
+| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 4 neighbours + wind | 25.9 | +5.3% |
+| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.9% |
+| HGB (persistence-residual target) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.9% |
+| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 4 neighbours + wind | 23.2 | +23.4% |
+| Lasso (alpha=0.001) | Mooloolaba + 4 neighbours + wind | 23.1 | +24.2% |
+| Ridge (alpha=1.0) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.6% |
+| TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.9% |
+| **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.7** | **+26.6%** |
 
-The full set of logged runs is in `experiments.jsonl`.
+The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`), re-run on the full 4-neighbour set via `notebooks/seq_playground.py` so every row shares the same 7 sources: train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+
+### Lasso: incremental value of each data source
+
+To check that the extra sources actually carry signal, here is a plain `Lasso(alpha=0.001)` trained on the Mooloolaba buoy alone, then on Mooloolaba plus each extra source *in isolation* (not cumulative). All rows share the identical 2015-2024 chronological 80/20 split, so RMSE and Skill are directly comparable; "Non-zero coefs" is how many of the feature columns Lasso kept, and "Top feature" is the largest `|coef|`.
+
+| Data sources | RMSE (cm) | Skill | Non-zero coefs | Top feature |
+|--------------|-----------|-------|----------------|-------------|
+| Mooloolaba only | 25.3 | +9.1% | 53 / 107 | `hsig_m` |
+| + Caloundra | 25.2 | +9.9% | 51 / 120 | `hsig_m` |
+| + Brisbane | 24.3 | +16.6% | 59 / 120 | `hsig_m` |
+| + Gold Coast | 24.1 | +17.3% | 55 / 120 | `gold-coast_hsig_m` |
+| + North Moreton Bay | 25.2 | +10.1% | 53 / 120 | `hsig_m` |
+| + wind | 24.6 | +14.2% | 86 / 211 | `hsig_m` |
+
+Every added source helps, but not equally: Brisbane and Gold Coast (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature — while Caloundra, despite being the closest neighbour, barely moves the needle. Wind adds a moderate lift and roughly doubles the kept-coefficient count.
 
 ## Running tests
 
@@ -159,7 +183,7 @@ Surf-Height-Prediction-2/
 │   ├── forecast/               # modelling package
 │   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
 │   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
-│   │   ├── features.py         # FeatureConfig, build_mooloolaba_features, add_neighbour_features, build_seq_features
+│   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
 │   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
 │   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
 │   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
@@ -179,11 +203,11 @@ Surf-Height-Prediction-2/
 
 **Package layout rationale.** `qld_ckan`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
 
-## Data sources
+## Data source
 
 Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation
 
-- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
+- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2013–2025), Gold Coast (2015–2025), North Moreton Bay (2010–2025).
 
 The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC):
 
@@ -215,30 +239,18 @@ slot gets the 14:00 wind value), which is strictly past-only.
 
 Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is
 sin/cos-encoded before being passed to add_neighbour_features — same pattern
-as the wave-buoy peak_dir_deg encoding in build_mooloolaba_features.
-
-
-## License
-
-See [LICENSE](LICENSE).
-
+as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 
 
 ## todo
   2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      
   underfit there. Adding features like Hs² or interaction terms could help.                                                                                                
-  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then
-  exponentiating predictions) can reduce this regression-to-the-mean effect. 
+  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then exponentiating predictions) can reduce this regression-to-the-mean effect. 
 
-    Big-leverage modelling changes
+### Big-leverage modelling changes
 
-  1. Train sequence models on the persistence residual, not the absolute target. The LSTM/GRU/RNN runs in experiments.jsonl all sit between −35% and −75% skill — they're  
-  worse than just calling tomorrow == today. The HGB residual-target trick in notebooks/linear_playground.py:282 already exists; lift it into
-  _TorchSeqForecaster.fit/predict (src/forecast/neural.py:81). The model then has to learn 0 by default, can't lose to persistence catastrophically, and gets all of its   
-  capacity to model the delta. This single change typically explains ~80% of "neural net underperforms persistence" pain.
   2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
-  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  
-  have a publishable model.
+  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  have a publishable model.
   3. Log/asinh-transform the target. Bias is +0.018 m on the best Ridge but the README todo already suspects it's concentrated at high tail (regression-to-mean). Fit      
   np.log1p(hsig) or np.arcsinh(hsig/H₀), exponentiate at predict time. Easy and almost always wins on big-day RMSE without hurting the bulk.                               
   4. Physics features the linear models can't discover on their own.
@@ -254,8 +266,7 @@ See [LICENSE](LICENSE).
   true blind set, OR move to an expanding-window CV (sklearn TimeSeriesSplit) for hyperparameter selection. Right now skill comparisons across experiments.jsonl rows      
   aren't statistically clean.
 
-
-    7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
+7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
   significant wave height"), but I'd at least:              
     - Forecast tp_s and peak_dir_deg jointly (multi-output) so downstream code can run a break-specific transform.                                                         
     - Add partitioned swell — sea vs primary vs secondary — if any of the QLD or BOM resources expose it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, 

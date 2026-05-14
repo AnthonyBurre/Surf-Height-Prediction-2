@@ -8,37 +8,6 @@ hyperparameters. Edit it in place and re-run - no other code changes needed.
 Each completed run appends to experiments.jsonl with a name derived from the
 CONFIG, so back-to-back runs with different settings stay distinguishable.
 
-Why this script exists
-----------------------
-The earlier LSTM (`mooloolaba_brisbane_lstm.py`) underperformed persistence
-across every logged configuration (best skill: -55%). The two failure modes
-called out in that script's header were:
-
-  (a) Raw circular-encoded channels carry too little information — the model
-      has to rediscover what the lag/momentum features encode explicitly.
-  (b) CPU is slow enough that ramping epochs is painful (~25 min / 50 epochs
-      at hidden=64).
-
-This playground addresses both: switch ``feature_mode`` to ``"engineered"``
-to give the model the same lag/rolling matrix the linear models use, and
-flip ``subsample_steps`` to a small number for fast iteration before
-committing to a full-length training run.
-
-Starting points to try (paste into CONFIG)
-------------------------------------------
-1. Quick smoke (≈30s on CPU):
-     model="gru", feature_mode="raw", epochs=3, subsample_steps=20000
-2. Default sane run (≈8 min CPU):
-     model="gru", feature_mode="raw", wind_stations=["mountain-creek"], epochs=15
-3. Engineered features — should beat the raw-input LSTM:
-     model="gru", feature_mode="engineered", wind_stations=["mountain-creek"], epochs=15
-4. TCN, parallelisable conv-based:
-     model="tcn", feature_mode="raw", wind_stations=["mountain-creek"], epochs=20
-5. Throw everything in:
-     model="gru", feature_mode="engineered",
-     wind_stations=["mountain-creek", "deception-bay"],
-     neighbours=["brisbane"], epochs=30, hidden=128
-
 Tips
 ----
 - ``device=None`` auto-detects (cuda > mps > cpu). On this Mac MPS is built
@@ -56,11 +25,8 @@ import time
 import warnings
 
 import pandas as pd
-import torch
-from sklearn.impute import SimpleImputer
 
 import forecast as fc
-from forecast.metrics import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -71,28 +37,42 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 
 CONFIG: dict = {
     # --- data ---
+    "primary_buoy":  "mooloolaba",  # any key in qld_ckan.wave.constants.BUOYS; download with `python -m qld_ckan wave --buoy NAME`
     "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
-    "neighbours":    ["brisbane"],          # subset of: "brisbane", "caloundra", "goldcoast", "north-moreton-bay"
+    "neighbours":    ["brisbane", "caloundra", "gold-coast", "north-moreton-bay"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
     "wind_stations": ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- features ---
     # "raw"        — circular-encoded raw channels + sin/cos time features
     #                (matches build_seq_features; what the previous LSTM used)
     # "engineered" — full lag + rolling + momentum matrix
-    #                (matches build_mooloolaba_features; what Ridge uses)
+    #                (matches build_buoy_features; what Ridge uses)
+    # "raw" beats "engineered" for every seq model — see seq_sweep.py.
     "feature_mode": "raw",
 
     # --- model ---
-    "model":         "lstm",       # "lstm", "gru", "rnn", "tcn"
+    "model":         "rnn",       # "lstm", "gru", "rnn", "tcn"
 
-    # shared seq-model hyperparams
+    # shared seq-model hyperparams.
+    # Defaults below are the best RNN config from notebooks/seq_sweep.py
+    # (RMSE 0.2324, skill +0.234 vs persistence). The key lesson from the
+    # sweep: these models overfit the persistence residual fast — epochs=2-3
+    # beats epochs=5 every time, and "raw" features beat "engineered".
+    # Best config per model class (all on feature_mode="raw", lr=1e-3):
+    #   rnn  : seq_len=48 hidden=128 num_layers=2 epochs=3  → skill +0.234
+    #   gru  : seq_len=48 hidden=64  num_layers=1 epochs=2  → skill +0.230
+    #   lstm : seq_len=48 hidden=64  num_layers=1 epochs=3  → skill +0.157
     "seq_len":       48,          # 48 × 30 min = 24 h of context
-    "hidden":        96,
+    "hidden":        128,
     "num_layers":    2,
-    "epochs":        10,
+    "epochs":        3,
     "batch_size":    512,
     "lr":            1e-3,
     "seed":          42,
+
+    # input/target scaling done inside the forecaster (fit on train):
+    # "standard" — mean/std; "robust" — median/IQR (resists storm-spike outliers)
+    "scaler":        "robust",
 
     # TCN-only knobs (ignored for RNN/GRU/LSTM)
     "tcn_channels":     (64, 64, 64, 64),
@@ -112,34 +92,17 @@ CONFIG: dict = {
 # ---------------------------------------------------------------------------
 
 
-def auto_device(preferred: str | None) -> str:
-    if preferred:
-        return preferred
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def load_wave(year_max: int) -> pd.DataFrame:
-    df = fc.load_data()
+def load_wave(buoy: str, year_max: int) -> pd.DataFrame:
+    df = fc.load_data(buoy=buoy)
     return df.loc[df.index.year <= year_max]
 
 
 def build_features(
-    wave: pd.DataFrame,
-    neighbour_series: dict[str, pd.Series],
+    merged: pd.DataFrame,
+    neighbour_cols: list[str],
     wind: pd.DataFrame | None,
     mode: str,
 ) -> pd.DataFrame:
-    merged = wave.copy()
-    neighbour_cols = []
-    for name, series in neighbour_series.items():
-        col = f"{name}_hsig_m"
-        merged[col] = series
-        neighbour_cols.append(col)
-
     if mode == "raw":
         # build_seq_features = encode_circular + add_time_features
         # neighbour cols ride through unchanged; wind cols appended below
@@ -148,8 +111,8 @@ def build_features(
             for col in wind.columns:
                 X[col] = wind[col]
     elif mode == "engineered":
-        mool_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-        X = fc.build_mooloolaba_features(mool_only)
+        primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
+        X = fc.build_buoy_features(primary_only)
         if neighbour_cols:
             X = fc.add_neighbour_features(X, merged, neighbour_cols)
         if wind is not None:
@@ -164,6 +127,7 @@ def build_model(cfg: dict, device: str):
         seq_len=cfg["seq_len"], hidden=cfg["hidden"], num_layers=cfg["num_layers"],
         epochs=cfg["epochs"], batch_size=cfg["batch_size"], lr=cfg["lr"],
         seed=cfg["seed"], device=device, verbose=cfg["verbose_train"],
+        scaler=cfg["scaler"],
     )
     name = cfg["model"].lower()
     if name == "lstm": return fc.LSTMForecaster(**common)
@@ -179,32 +143,20 @@ def build_model(cfg: dict, device: str):
     raise ValueError(f"Unknown model {name!r}; choose lstm/gru/rnn/tcn")
 
 
-def _wind_tag(stations: list[str]) -> str:
-    return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
-
-
-def make_run_name(cfg: dict) -> str:
-    parts = [cfg["run_name"], cfg["model"], cfg["feature_mode"]]
-    if cfg["wind_stations"]:
-        parts.append("wind-" + _wind_tag(cfg["wind_stations"]))
-    if cfg["neighbours"]:
-        parts.append("+".join(cfg["neighbours"]))
-    return "_".join(parts)
-
-
 def main() -> None:
     cfg = CONFIG
-    device = auto_device(cfg["device"])
+    device = fc.auto_device(cfg["device"])
     print(f"device         : {device}")
 
-    wave = load_wave(cfg["year_max"])
+    wave = load_wave(cfg["primary_buoy"], cfg["year_max"])
     neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
     wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
     # Restrict to wind overlap when wind is in play, so every training row has wind.
     wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
 
-    X = build_features(wave, neighbours, wind, cfg["feature_mode"])
+    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
+    X = build_features(merged, neighbour_cols, wind, cfg["feature_mode"])
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 
@@ -225,16 +177,20 @@ def main() -> None:
     worst = nan_pct.sort_values(ascending=False).head(3).round(2).to_dict()
     print(f"top NaN cols   : {worst}\n")
 
-    imp = SimpleImputer(strategy="mean")
-    X_tr_imp = pd.DataFrame(imp.fit_transform(X_tr), columns=X_tr.columns, index=X_tr.index)
-    X_te_imp = pd.DataFrame(imp.transform(X_te),     columns=X_te.columns, index=X_te.index)
+    X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
 
     persist = fc.evaluate(fc.PersistenceForecaster(), X_p_tr, y_tr, X_p_te, y_te)
     pp = persist.predictions
     print(f"persistence    : RMSE {persist.metrics['RMSE']:.4f}\n")
 
     model = build_model(cfg, device)
-    name = make_run_name(cfg)
+    name = fc.compose_run_name(
+        cfg["run_name"],
+        model=cfg["model"],
+        feature_mode=cfg["feature_mode"],
+        wind_stations=cfg["wind_stations"],
+        neighbours=cfg["neighbours"],
+    )
     print(f"=== {name}  (seq_len={cfg['seq_len']}, hidden={cfg['hidden']}, "
           f"layers={cfg['num_layers']}, epochs={cfg['epochs']}, lr={cfg['lr']}) ===")
 
@@ -244,7 +200,7 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"\nfit + predict  : {elapsed/60:.2f} min")
 
-    metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=pp)
+    metrics = fc.summarise(y_te.to_numpy(), preds, y_pred_baseline=pp)
     result = fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=model)
 
     print(f"\n{name}")
@@ -252,7 +208,7 @@ def main() -> None:
     print(f"  MAE   {metrics['MAE']:.4f}    Bias  {metrics['Bias']:+.4f}")
 
     if cfg["log_to_jsonl"]:
-        sources = ["mooloolaba"] + cfg["neighbours"] + cfg["wind_stations"]
+        sources = [cfg["primary_buoy"]] + cfg["neighbours"] + cfg["wind_stations"]
         fc.log_run(
             result,
             data_sources=sources,
@@ -267,6 +223,7 @@ def main() -> None:
                 "epochs":           cfg["epochs"],
                 "lr":               cfg["lr"],
                 "batch_size":       cfg["batch_size"],
+                "scaler":           cfg["scaler"],
                 "device":           device,
                 "wind_stations":    cfg["wind_stations"],
                 "subsample_steps":  cfg["subsample_steps"],
@@ -275,8 +232,7 @@ def main() -> None:
             },
         )
 
-    log = fc.read_log()
-    recent = log[log["name"].str.startswith(cfg["run_name"])].sort_values("timestamp").tail(8)
+    recent = fc.recent_runs(cfg["run_name"], n=8)
     if len(recent) > 1:
         print("\nrecent playground runs (most recent last):")
         for _, row in recent.iterrows():

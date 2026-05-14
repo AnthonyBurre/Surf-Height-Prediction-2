@@ -9,6 +9,8 @@ the previous ``seq_len`` feature vectors ending at *t*, and predict
 ``data.make_target``). No lag/rolling features are needed — the
 sequence model is expected to learn temporal structure itself.
 """
+import warnings
+
 import numpy as np
 import pandas as pd
 import torch
@@ -16,6 +18,45 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from .config import TARGET_COL
+
+
+def auto_device(preferred: str | None = None) -> str:
+    """Pick the best available torch device, honouring an explicit preference.
+
+    Order: explicit ``preferred`` → cuda → mps → cpu. Lives here (next to the
+    forecasters that consume it) so notebooks can do ``device =
+    fc.auto_device()`` without re-implementing the cascade.
+    """
+    if preferred:
+        return preferred
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _resolve_device(preferred: str | None) -> torch.device:
+    """Resolve ``preferred`` to a real torch.device, warning on a fallback.
+
+    A user passing ``device="cuda"`` on a CPU-only box would otherwise
+    silently train on CPU and wonder why fit time blew up. Warn once.
+    """
+    if preferred is None:
+        return torch.device(auto_device())
+    if preferred == "cuda" and not torch.cuda.is_available():
+        warnings.warn(
+            "device='cuda' requested but CUDA is unavailable; falling back to CPU.",
+            stacklevel=3,
+        )
+        return torch.device("cpu")
+    if preferred == "mps" and not torch.backends.mps.is_available():
+        warnings.warn(
+            "device='mps' requested but MPS is unavailable; falling back to CPU.",
+            stacklevel=3,
+        )
+        return torch.device("cpu")
+    return torch.device(preferred)
 
 
 class _WindowDataset(Dataset):
@@ -52,7 +93,13 @@ class _TorchSeqForecaster:
         device: str | None = None,
         seed: int = 42,
         verbose: bool = False,
+        residual: bool = True,
+        scaler: str = "standard",
     ) -> None:
+        if scaler not in ("standard", "robust"):
+            raise ValueError(
+                f"scaler must be 'standard' or 'robust', got {scaler!r}"
+            )
         self.seq_len = seq_len
         self.hidden = hidden
         self.num_layers = num_layers
@@ -61,14 +108,16 @@ class _TorchSeqForecaster:
         self.lr = lr
         self.feature_cols = feature_cols
         self.target_col = target_col
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = _resolve_device(device)
         self.seed = seed
         self.verbose = verbose
+        self.residual = residual
+        self.scaler = scaler
         self._model: nn.Module | None = None
-        self._x_mean: np.ndarray | None = None
-        self._x_std: np.ndarray | None = None
-        self._y_mean: float | None = None
-        self._y_std: float | None = None
+        self._x_center: np.ndarray | None = None
+        self._x_scale: np.ndarray | None = None
+        self._y_center: float | None = None
+        self._y_scale: float | None = None
         self._train_tail: np.ndarray | None = None
 
     def _build_encoder(self, n_features: int) -> nn.Module:
@@ -78,23 +127,49 @@ class _TorchSeqForecaster:
         cols = self.feature_cols or list(X.columns)
         return X[cols].to_numpy(dtype=np.float32)
 
+    def _fit_scaler(self, arr: np.ndarray, axis: int | None):
+        """Return (center, spread) for ``arr`` per the configured scaler.
+
+        "standard" → mean / std; "robust" → median / IQR (resists the
+        storm-spike outliers in wave data). Both are NaN-aware: a single
+        NaN in any column would otherwise poison the statistic, after
+        which the per-batch valid-row mask discards almost every window
+        and training collapses.
+        """
+        if self.scaler == "robust":
+            center = np.nanmedian(arr, axis=axis)
+            q75, q25 = np.nanpercentile(arr, [75, 25], axis=axis)
+            spread = q75 - q25
+        else:  # "standard"
+            center = np.nanmean(arr, axis=axis)
+            spread = np.nanstd(arr, axis=axis)
+        return center, spread
+
     def fit(self, X: pd.DataFrame, y: pd.Series) -> "_TorchSeqForecaster":
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
 
         Xa = self._select(X)
         ya = y.to_numpy(dtype=np.float32)
+        if self.residual:
+            ya = ya - X[self.target_col].to_numpy(dtype=np.float32)
 
-        # NaN-aware: a single NaN in any column otherwise poisons the mean and
-        # standardised tensor, after which the per-batch valid-row mask
-        # discards almost every window and training collapses.
-        self._x_mean = np.nanmean(Xa, axis=0)
-        self._x_std = np.nanstd(Xa, axis=0) + 1e-8
-        self._y_mean = float(np.nanmean(ya))
-        self._y_std = float(np.nanstd(ya) + 1e-8)
+        self._x_center, x_scale = self._fit_scaler(Xa, axis=0)
+        self._x_scale = x_scale + 1e-8
+        y_center, y_scale = self._fit_scaler(ya, axis=None)
+        self._y_center = float(y_center)
+        y_scale = float(y_scale)
+        if y_scale == 0:
+            raise ValueError(
+                f"{type(self).__name__}.fit: target has zero variance — "
+                "predictions would be ill-defined. Check that y_train is not constant."
+            )
+        self._y_scale = y_scale + 1e-8
 
-        Xs = (Xa - self._x_mean) / self._x_std
-        ys = (ya - self._y_mean) / self._y_std
+        # nanmedian/nanpercentile upcast to float64; keep tensors float32
+        # so they match the model weights.
+        Xs = ((Xa - self._x_center) / self._x_scale).astype(np.float32)
+        ys = ((ya - self._y_center) / self._y_scale).astype(np.float32)
 
         dataset = _WindowDataset(Xs, ys, self.seq_len)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, drop_last=False)
@@ -124,8 +199,9 @@ class _TorchSeqForecaster:
                 epoch_loss += loss.item()
                 epoch_batches += 1
             if self.verbose and epoch_batches:
-                rmse = (epoch_loss / epoch_batches) ** 0.5 * self._y_std
-                print(f"  epoch {epoch + 1:3d}/{self.epochs}  train RMSE ≈ {rmse:.4f}")
+                rmse = (epoch_loss / epoch_batches) ** 0.5 * self._y_scale
+                label = "residual RMSE" if self.residual else "train RMSE"
+                print(f"  epoch {epoch + 1:3d}/{self.epochs}  {label} ≈ {rmse:.4f}")
 
         self._model = model
         if self.seq_len > 1:
@@ -139,7 +215,7 @@ class _TorchSeqForecaster:
         if self._model is None:
             raise RuntimeError(f"{type(self).__name__}.predict called before fit")
         Xa = self._select(X)
-        Xs = (Xa - self._x_mean) / self._x_std
+        Xs = ((Xa - self._x_center) / self._x_scale).astype(np.float32)
         if self._train_tail is not None:
             Xs_ext = np.concatenate([self._train_tail, Xs], axis=0)
         else:
@@ -158,14 +234,17 @@ class _TorchSeqForecaster:
             pred = np.where(bad.cpu().numpy(), np.nan, pred)
             outs.append(pred)
         preds = np.concatenate(outs) if outs else np.empty(0, dtype=np.float32)
-        preds = preds * self._y_std + self._y_mean
+        preds = preds * self._y_scale + self._y_center
 
         # If the caller did not supply enough history (e.g. X shorter than
         # seq_len and no train tail), pad the front with NaN.
         if len(preds) < len(X):
             pad = np.full(len(X) - len(preds), np.nan, dtype=preds.dtype)
             preds = np.concatenate([pad, preds])
-        return preds[-len(X):]
+        preds = preds[-len(X):]
+        if self.residual:
+            preds = preds + X[self.target_col].to_numpy(dtype=np.float32)
+        return preds
 
 
 class _RNNHead(nn.Module):

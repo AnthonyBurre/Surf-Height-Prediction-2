@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import HORIZON_STEPS, TARGET_COL
+from .features import encode_circular
 
 # Resolve relative to the repo root, not the caller's cwd, so notebooks and
 # scripts both find the file without path juggling.
@@ -75,13 +76,14 @@ def chronological_split(
 
 
 # Filename registries for the multi-source playgrounds. Keys are the slugs the
-# CONFIG dicts pass through (note the ``goldcoast`` no-hyphen convention used
-# in experiments.jsonl); values are the CSVs ``python -m qld_ckan wave`` /
-# ``python -m qld_ckan wind`` produce.
+# CONFIG dicts pass through; values are the CSVs ``python -m qld_ckan wave`` /
+# ``python -m qld_ckan wind`` produce. Slugs match the qld_ckan BUOYS / STATIONS
+# registry exactly so the same name flows from CLI download → notebook config →
+# experiments.jsonl.
 NEIGHBOUR_FILES: dict[str, str] = {
     "brisbane":          "brisbane_wave_data_2015-2025.csv",
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "goldcoast":         "gold-coast_wave_data_2015-2025.csv",
+    "gold-coast":        "gold-coast_wave_data_2015-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
 }
 
@@ -124,10 +126,6 @@ def load_wind(
     """
     if not stations:
         return None
-    # Local import: ``encode_circular`` lives in features.py and importing it
-    # at module top would create a data ↔ features cycle.
-    from .features import encode_circular
-
     frames: list[pd.DataFrame] = []
     for s in stations:
         if s not in WIND_FILES:

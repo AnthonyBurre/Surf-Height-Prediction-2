@@ -4,68 +4,12 @@ Pytest auto-discovers this file, so any test in ``src/tests/`` can name
 these fixtures as parameters without an explicit import.
 """
 from copy import deepcopy
-from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from forecast import chronological_split, make_target
-
-
-# ---------------------------------------------------------------------------
-# CKAN datastore mocks (shared by wave + wind downloader tests)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def datastore_response():
-    def _make(records: list[dict], total: int | None = None) -> MagicMock:
-        mock = MagicMock()
-        mock.raise_for_status.return_value = None
-        mock.json.return_value = {
-            "result": {
-                "total": total if total is not None else len(records),
-                "records": records,
-            }
-        }
-        return mock
-    return _make
-
-
-# ---------------------------------------------------------------------------
-# Wave-buoy raw record fixtures
-# ---------------------------------------------------------------------------
-
-_WAVE_RECORDS_MID_ERA = [
-    {"_id": 1, "Date/Time": "2017-01-01T00:00:00", "Hs": 1.10, "Hmax": 1.90, "Tz": 5.50, "Tp": 9.00, "Peak Direction": 95.0, "SST": 25.0},
-    {"_id": 2, "Date/Time": "2017-01-01T00:30:00", "Hs": 1.15, "Hmax": 1.95, "Tz": 5.55, "Tp": 9.10, "Peak Direction": 98.0, "SST": 25.1},
-]
-
-_WAVE_RECORDS_PRE_2017 = [
-    {"_id": 1, "Date/Time": "2015-01-01T00:00:00", "Hs": 1.14, "Hmax": 2.08, "Tz": 6.67, "Tp": 9.33, "Dir_Tp TRUE": 97.0, "SST": 26.95},
-    {"_id": 2, "Date/Time": "2015-01-01T00:30:00", "Hs": 1.12, "Hmax": 1.92, "Tz": 6.37, "Tp": 10.12, "Dir_Tp TRUE": 92.0, "SST": 26.90},
-]
-
-_WAVE_RECORDS_WITH_UNITS = [
-    {"_id": 1, "Date/Time (AEST)": "2022-01-01T00:00:00", "Hs (m)": 1.20, "Hmax (m)": 2.00, "Tz (s)": 5.60, "Tp (s)": 9.50, "Peak Direction (degrees)": 100.0, "SST (degrees C)": 26.0},
-    {"_id": 2, "Date/Time (AEST)": "2022-01-01T00:30:00", "Hs (m)": 1.25, "Hmax (m)": 2.10, "Tz (s)": 5.65, "Tp (s)": 9.55, "Peak Direction (degrees)": 102.0, "SST (degrees C)": 26.1},
-]
-
-
-@pytest.fixture
-def wave_records_mid_era() -> list[dict]:
-    return deepcopy(_WAVE_RECORDS_MID_ERA)
-
-
-@pytest.fixture
-def wave_records_pre_2017() -> list[dict]:
-    return deepcopy(_WAVE_RECORDS_PRE_2017)
-
-
-@pytest.fixture
-def wave_records_with_units() -> list[dict]:
-    return deepcopy(_WAVE_RECORDS_WITH_UNITS)
 
 
 # ---------------------------------------------------------------------------

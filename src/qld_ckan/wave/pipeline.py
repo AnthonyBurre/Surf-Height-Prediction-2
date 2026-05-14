@@ -38,13 +38,16 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     Gaps in the source data become NaN rows on the reindexed grid so that
     downstream lag/rolling features have a well-defined temporal axis.
     """
+    n_raw = len(df)
     df = df.rename(columns=COLUMN_RENAME_MAP)
     df = df.dropna(subset=["datetime_utc"])
+    n_valid_ts = len(df)
     df = df.set_index("datetime_utc")
     df = df.sort_index()
     # Yearly files occasionally overlap at boundaries; drop duplicate
     # timestamps so reindex has a unique axis to align against.
     df = df[~df.index.duplicated(keep="first")]
+    n_unique = len(df)
     # CKAN can return numeric fields as strings; coerce once here so
     # downstream consumers never need to think about dtypes.
     df = df.apply(pd.to_numeric, errors="coerce")
@@ -55,6 +58,10 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.reindex(full_index)
     df.index.name = "datetime_utc"
     df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    logger.info(
+        "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
+        n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,
+    )
     return df
 
 
