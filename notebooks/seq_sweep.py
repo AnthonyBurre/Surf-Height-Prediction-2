@@ -28,13 +28,13 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 # --- fixed data config (mirrors seq_playground CONFIG) ---
 PRIMARY_BUOY = "mooloolaba"
 YEAR_MAX = 2024
-NEIGHBOURS = ["brisbane", "gold-coast", "north-moreton-bay"]
+NEIGHBOURS = ["brisbane", "caloundra", "gold-coast", "north-moreton-bay"]
 WIND_STATIONS = ["mountain-creek", "deception-bay"]
 FEATURE_MODE = "raw"  # raw = 24 circular-encoded channels; fastest + best historically
 RUN_PREFIX = "seqsweep"
 
 # --- the grid ---
-MODELS = ["rnn", "gru", "lstm"]
+MODELS = ["rnn", "gru", "lstm", "tcn"]
 GRID = [
     # (seq_len, hidden, num_layers, epochs)
     (48, 32, 1, 3),
@@ -80,14 +80,18 @@ def build_data():
 
 def make_model(model: str, seq_len: int, hidden: int, num_layers: int, epochs: int):
     common = dict(
-        seq_len=seq_len, hidden=hidden, num_layers=num_layers, epochs=epochs,
+        seq_len=seq_len, epochs=epochs,
         batch_size=BATCH_SIZE, lr=LR, seed=SEED, device="cpu", verbose=False,
     )
+    if model == "tcn":
+        # TCN has no hidden/num_layers; reuse those grid axes as the
+        # width/depth of a uniform dilated-conv stack.
+        return fc.TCNForecaster(channels=(hidden,) * num_layers, **common)
     return {
         "rnn": fc.SimpleRNNForecaster,
         "gru": fc.GRUForecaster,
         "lstm": fc.LSTMForecaster,
-    }[model](**common)
+    }[model](hidden=hidden, num_layers=num_layers, **common)
 
 
 def run_one(d: dict, model: str, seq_len: int, hidden: int, num_layers: int,

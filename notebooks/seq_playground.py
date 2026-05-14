@@ -39,7 +39,7 @@ CONFIG: dict = {
     # --- data ---
     "primary_buoy":  "mooloolaba",  # any key in qld_ckan.wave.constants.BUOYS; download with `python -m qld_ckan wave --buoy NAME`
     "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
-    "neighbours":    ["brisbane", "gold-coast", "north-moreton-bay"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
+    "neighbours":    ["brisbane", "caloundra", "gold-coast", "north-moreton-bay"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
     "wind_stations": ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
 
     # --- features ---

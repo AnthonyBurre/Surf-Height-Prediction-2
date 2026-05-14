@@ -114,16 +114,34 @@ All scripts are plain `.py` files — run directly:
 
 All runs use a chronological 80/20 split on the **2015-2024** window — the span where both wind stations have data. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; the full set of logged runs (other windows, feature combinations, and the sequence-model sweep) is in `experiments.jsonl`.
 
-| Model | Data sources | RMSE | Skill |
+| Model | Data sources | RMSE (cm) | Skill |
 |-------|-------------|------|-------|
-| Persistence (baseline) | Mooloolaba | 0.265 | — |
-| Ridge | Mooloolaba | 0.253 | +9.0% |
-| Ridge + wind | Mooloolaba + Mountain Creek AWS | 0.248 | +12.9% |
-| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 3 neighbours + wind | 0.244 | +15.7% |
-| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 3 neighbours + wind | 0.233 | +23.0% |
-| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 3 neighbours + wind | 0.232 | +23.4% |
+| Persistence (baseline) | Mooloolaba | 26.5 | — |
+| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 4 neighbours + wind | 25.8 | +6.1% |
+| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 4 neighbours + wind | 24.0 | +18.3% |
+| HGB (persistence-residual target) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.9% |
+| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.7% |
+| Lasso (alpha=0.001) | Mooloolaba + 4 neighbours + wind | 23.2 | +23.7% |
+| Ridge (alpha=1.0) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.6% |
+| TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 22.9 | +25.6% |
+| **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.8** | **+26.5%** |
 
-The sequence models are the best configs from a hyperparameter sweep (`notebooks/seq_sweep.py`): train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`), re-run on the full 4-neighbour set via `notebooks/seq_playground.py` so every row shares the same 7 sources: train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features); the TCN now edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+
+### Lasso: incremental value of each data source
+
+To check that the extra sources actually carry signal, here is a plain `Lasso(alpha=0.001)` trained on the Mooloolaba buoy alone, then on Mooloolaba plus each extra source *in isolation* (not cumulative). All rows share the identical 2015-2024 chronological 80/20 split, so RMSE and Skill are directly comparable; "Non-zero coefs" is how many of the feature columns Lasso kept, and "Top feature" is the largest `|coef|`.
+
+| Data sources | RMSE (cm) | Skill | Non-zero coefs | Top feature |
+|--------------|-----------|-------|----------------|-------------|
+| Mooloolaba only | 25.3 | +9.1% | 53 / 107 | `hsig_m` |
+| + Caloundra | 25.2 | +9.9% | 51 / 120 | `hsig_m` |
+| + Brisbane | 24.3 | +16.6% | 59 / 120 | `hsig_m` |
+| + Gold Coast | 24.1 | +17.3% | 55 / 120 | `gold-coast_hsig_m` |
+| + North Moreton Bay | 25.2 | +10.1% | 53 / 120 | `hsig_m` |
+| + wind | 24.6 | +14.2% | 86 / 211 | `hsig_m` |
+
+Every added source helps, but not equally: Brisbane and Gold Coast (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature — while Caloundra, despite being the closest neighbour, barely moves the needle. Wind adds a moderate lift and roughly doubles the kept-coefficient count.
 
 ## Running tests
 
@@ -176,7 +194,7 @@ Surf-Height-Prediction-2/
 
 Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation
 
-- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2024–2025), Gold Coast (2024–2025), North Moreton Bay (2010–2025).
+- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2013–2025), Gold Coast (2015–2025), North Moreton Bay (2010–2025).
 
 The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC):
 
@@ -219,8 +237,7 @@ as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 ### Big-leverage modelling changes
 
   2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
-  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  
-  have a publishable model.
+  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  have a publishable model.
   3. Log/asinh-transform the target. Bias is +0.018 m on the best Ridge but the README todo already suspects it's concentrated at high tail (regression-to-mean). Fit      
   np.log1p(hsig) or np.arcsinh(hsig/H₀), exponentiate at predict time. Easy and almost always wins on big-day RMSE without hurting the bulk.                               
   4. Physics features the linear models can't discover on their own.
