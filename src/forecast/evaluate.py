@@ -9,6 +9,7 @@ from typing import Any, Protocol, Self
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from .metrics import summarise
 
@@ -94,3 +95,31 @@ def mean_impute(
         pd.DataFrame(imp.fit_transform(X_train), columns=X_train.columns, index=X_train.index),
         pd.DataFrame(imp.transform(X_test),      columns=X_test.columns,  index=X_test.index),
     )
+
+
+_SCALERS = {"robust": RobustScaler, "standard": StandardScaler}
+
+
+def scale_features(
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    *,
+    method: str = "robust",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fit a feature scaler on train, apply to both frames.
+
+    ``method`` is "robust" (RobustScaler — median/IQR, resists storm-spike
+    outliers in wave data) or "standard" (StandardScaler).
+
+    Circular columns (suffix ``_sin``/``_cos``) are passed through untouched:
+    they are already in [-1, 1], and scaling sin/cos independently would
+    distort the unit-circle relationship. Penalised linear models (Ridge,
+    Lasso) need this so ``alpha`` shrinks every coefficient on a comparable
+    scale; tree models are scale-invariant and don't need it.
+    """
+    scale_cols = [c for c in X_train.columns if not c.endswith(("_sin", "_cos"))]
+    scaler = _SCALERS[method]()
+    Xtr, Xte = X_train.copy(), X_test.copy()
+    Xtr[scale_cols] = scaler.fit_transform(X_train[scale_cols])
+    Xte[scale_cols] = scaler.transform(X_test[scale_cols])
+    return Xtr, Xte

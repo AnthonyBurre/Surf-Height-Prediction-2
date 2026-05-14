@@ -85,6 +85,19 @@ X = fc.build_buoy_features(df, config=cfg)
 
 For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circular encoding and time features only, no pre-built lags (the model windows its own input).
 
+### Feature scaling
+
+Feature magnitudes span orders of scale — `tp_s` in seconds, `hsig_m` in metres, sin/cos columns already in `[-1, 1]`. Penalised linear models care: an unscaled `alpha` shrinks large-magnitude coefficients unevenly. Scaling is fit on train only and applied to both splits, so no test statistics leak.
+
+```python
+X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
+X_tr_s, X_te_s = fc.scale_features(X_tr_imp, X_te_imp, method="robust")  # or "standard"
+```
+
+`fc.scale_features` defaults to `RobustScaler` (median/IQR) — wave data is heavy-tailed, so storm-spike outliers would inflate a standard-deviation scale. **Circular `*_sin`/`*_cos` columns are passed through untouched**: they are already in `[-1, 1]`, and scaling a sin/cos pair independently would distort the unit-circle geometry. Tree models (HGB) are scale-invariant and are left on the raw matrix.
+
+Sequence models scale internally instead — `_TorchSeqForecaster` standardises its own input channels and target (fit on train), selectable per the `scaler` argument (`"standard"` mean/std, or `"robust"` median/IQR), so they take the unscaled `build_seq_features` frame directly.
+
 ### Available forecasters
 
 | family          | classes                                                                         |
@@ -117,16 +130,16 @@ All runs use a chronological 80/20 split on the **2015-2024** window — the spa
 | Model | Data sources | RMSE (cm) | Skill |
 |-------|-------------|------|-------|
 | Persistence (baseline) | Mooloolaba | 26.5 | — |
-| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 4 neighbours + wind | 25.8 | +6.1% |
-| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 4 neighbours + wind | 24.0 | +18.3% |
+| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 4 neighbours + wind | 25.9 | +5.3% |
+| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.9% |
 | HGB (persistence-residual target) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.9% |
-| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 4 neighbours + wind | 23.6 | +20.7% |
-| Lasso (alpha=0.001) | Mooloolaba + 4 neighbours + wind | 23.2 | +23.7% |
+| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 4 neighbours + wind | 23.2 | +23.4% |
+| Lasso (alpha=0.001) | Mooloolaba + 4 neighbours + wind | 23.1 | +24.2% |
 | Ridge (alpha=1.0) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.6% |
-| TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 22.9 | +25.6% |
-| **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.8** | **+26.5%** |
+| TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.9% |
+| **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.7** | **+26.6%** |
 
-The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`), re-run on the full 4-neighbour set via `notebooks/seq_playground.py` so every row shares the same 7 sources: train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features); the TCN now edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`), re-run on the full 4-neighbour set via `notebooks/seq_playground.py` so every row shares the same 7 sources: train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
 
 ### Lasso: incremental value of each data source
 

@@ -50,6 +50,7 @@ EPOCH_PROBE = [(48, 64, 1, 2), (48, 64, 1, 5)]
 BATCH_SIZE = 512
 LR = 1e-3
 SEED = 42
+SCALER = "robust"  # in-forecaster input/target scaling: "standard" or "robust"
 
 
 def build_data():
@@ -82,6 +83,7 @@ def make_model(model: str, seq_len: int, hidden: int, num_layers: int, epochs: i
     common = dict(
         seq_len=seq_len, epochs=epochs,
         batch_size=BATCH_SIZE, lr=LR, seed=SEED, device="cpu", verbose=False,
+        scaler=SCALER,
     )
     if model == "tcn":
         # TCN has no hidden/num_layers; reuse those grid axes as the
@@ -116,7 +118,8 @@ def run_one(d: dict, model: str, seq_len: int, hidden: int, num_layers: int,
         extra={
             "feature_mode": FEATURE_MODE, "seq_len": seq_len, "hidden": hidden,
             "num_layers": num_layers, "epochs": epochs, "lr": LR,
-            "batch_size": BATCH_SIZE, "device": "cpu", "imputation": "mean",
+            "batch_size": BATCH_SIZE, "scaler": SCALER, "device": "cpu",
+            "imputation": "mean",
             "elapsed_min": round(elapsed / 60, 2), "sweep": True,
         },
     )

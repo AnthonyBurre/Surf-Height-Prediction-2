@@ -75,6 +75,10 @@ CONFIG: dict = {
     # nanmean ensemble of all enabled model predictions
     "ensemble": True,
 
+    # feature scaling for the linear models (Ridge/Lasso); HGB is left raw.
+    # None disables; "robust" or "standard".
+    "scaling": "robust",
+
     # --- run / logging ---
     "run_name":     "lineopt",  # log entries get suffixed with active models + sources
     "log_to_jsonl": True,
@@ -277,6 +281,8 @@ def main() -> None:
     X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
     X_p_tr, X_p_te, _, _   = fc.chronological_split(X_p, y)
     X_tr_imp, X_te_imp     = fc.mean_impute(X_tr, X_te)
+    if cfg.get("scaling"):
+        X_tr_imp, X_te_imp = fc.scale_features(X_tr_imp, X_te_imp, method=cfg["scaling"])
 
     nan_pct = X.isna().mean().mul(100)
     worst = nan_pct.sort_values(ascending=False).head(3).round(2).to_dict()
@@ -294,6 +300,7 @@ def main() -> None:
     extra_base: dict = {
         "window": window_str,
         "imputation": "mean",
+        "scaling": cfg.get("scaling") or "none",
         "n_neighbours": len(cfg["neighbours"]),
         "wind_stations": cfg["wind_stations"],
     }

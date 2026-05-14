@@ -22,6 +22,7 @@ from forecast import (
     make_target,
     restrict_to_overlap,
     rmse,
+    scale_features,
     skill_score,
     summarise,
 )
@@ -401,3 +402,69 @@ def test_compare_sorts_by_rmse(synthetic_df):
     r2 = evaluate(ClimatologyHourForecaster(horizon_steps=4), Xtr, ytr, Xte, yte, name="b")
     table = compare([r1, r2])
     assert list(table.index) == sorted(table.index, key=lambda m: table.loc[m, "RMSE"])
+
+
+# ---------------------------------------------------------------------------
+# scale_features
+# ---------------------------------------------------------------------------
+
+
+def _scale_frames():
+    idx_tr = pd.date_range("2020-01-01", periods=50, freq="30min", name="datetime_utc")
+    idx_te = pd.date_range("2020-02-01", periods=20, freq="30min", name="datetime_utc")
+    cols = ["hsig_m", "tp_s", "peak_dir_deg_sin", "peak_dir_deg_cos"]
+    rng = np.random.default_rng(0)
+    Xtr = pd.DataFrame(
+        {
+            "hsig_m": rng.normal(2.0, 0.5, 50),
+            "tp_s": rng.normal(9.0, 2.0, 50),
+            "peak_dir_deg_sin": rng.uniform(-1, 1, 50),
+            "peak_dir_deg_cos": rng.uniform(-1, 1, 50),
+        },
+        index=idx_tr,
+    )[cols]
+    # Test frame deliberately shifted to a different distribution.
+    Xte = pd.DataFrame(
+        {
+            "hsig_m": rng.normal(5.0, 0.5, 20),
+            "tp_s": rng.normal(15.0, 2.0, 20),
+            "peak_dir_deg_sin": rng.uniform(-1, 1, 20),
+            "peak_dir_deg_cos": rng.uniform(-1, 1, 20),
+        },
+        index=idx_te,
+    )[cols]
+    return Xtr, Xte
+
+
+def test_scale_features_leaves_circular_columns_untouched():
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="robust")
+    for col in ("peak_dir_deg_sin", "peak_dir_deg_cos"):
+        pd.testing.assert_series_equal(Str[col], Xtr[col])
+        pd.testing.assert_series_equal(Ste[col], Xte[col])
+
+
+def test_scale_features_centres_non_circular_train_columns():
+    Xtr, _ = _scale_frames()
+    Str, _ = scale_features(Xtr, Xtr, method="robust")
+    # RobustScaler centres on the median -> scaled train median ~ 0.
+    assert Str["hsig_m"].median() == pytest.approx(0.0, abs=1e-9)
+    assert Str["tp_s"].median() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_scale_features_preserves_columns_order_and_index():
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="standard")
+    assert list(Str.columns) == list(Xtr.columns)
+    assert list(Ste.columns) == list(Xte.columns)
+    pd.testing.assert_index_equal(Str.index, Xtr.index)
+    pd.testing.assert_index_equal(Ste.index, Xte.index)
+
+
+def test_scale_features_applies_train_stats_to_test():
+    """Test frame is transformed with train-fitted stats, not its own."""
+    Xtr, Xte = _scale_frames()
+    Str, Ste = scale_features(Xtr, Xte, method="robust")
+    # Test distribution sits well above train -> scaled test stays far from 0.
+    assert Ste["hsig_m"].median() > 1.0
+    assert Ste["tp_s"].median() > 1.0

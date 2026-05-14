@@ -70,6 +70,10 @@ CONFIG: dict = {
     "lr":            1e-3,
     "seed":          42,
 
+    # input/target scaling done inside the forecaster (fit on train):
+    # "standard" — mean/std; "robust" — median/IQR (resists storm-spike outliers)
+    "scaler":        "robust",
+
     # TCN-only knobs (ignored for RNN/GRU/LSTM)
     "tcn_channels":     (64, 64, 64, 64),
     "tcn_kernel_size":  3,
@@ -123,6 +127,7 @@ def build_model(cfg: dict, device: str):
         seq_len=cfg["seq_len"], hidden=cfg["hidden"], num_layers=cfg["num_layers"],
         epochs=cfg["epochs"], batch_size=cfg["batch_size"], lr=cfg["lr"],
         seed=cfg["seed"], device=device, verbose=cfg["verbose_train"],
+        scaler=cfg["scaler"],
     )
     name = cfg["model"].lower()
     if name == "lstm": return fc.LSTMForecaster(**common)
@@ -218,6 +223,7 @@ def main() -> None:
                 "epochs":           cfg["epochs"],
                 "lr":               cfg["lr"],
                 "batch_size":       cfg["batch_size"],
+                "scaler":           cfg["scaler"],
                 "device":           device,
                 "wind_stations":    cfg["wind_stations"],
                 "subsample_steps":  cfg["subsample_steps"],

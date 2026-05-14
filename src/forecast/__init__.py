@@ -41,7 +41,7 @@ from .data import (
     make_target,
     restrict_to_overlap,
 )
-from .evaluate import EvaluationResult, compare, evaluate, mean_impute
+from .evaluate import EvaluationResult, compare, evaluate, mean_impute, scale_features
 from .experiments import (
     compose_run_name,
     evaluate_and_log,
@@ -130,6 +130,7 @@ __all__ = [
     "compare",
     "evaluate",
     "mean_impute",
+    "scale_features",
     # experiments
     "compose_run_name",
     "evaluate_and_log",
