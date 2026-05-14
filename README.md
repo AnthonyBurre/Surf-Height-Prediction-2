@@ -243,16 +243,11 @@ as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 
 
 ## todo
-  2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      
-  underfit there. Adding features like Hs² or interaction terms could help.                                                                                                
-  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then exponentiating predictions) can reduce this regression-to-the-mean effect. 
+  2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      underfit there. Adding features like Hs² or interaction terms could help.                                                                    
 
 ### Big-leverage modelling changes
 
-  2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
-  10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  have a publishable model.
-  3. Log/asinh-transform the target. Bias is +0.018 m on the best Ridge but the README todo already suspects it's concentrated at high tail (regression-to-mean). Fit      
-  np.log1p(hsig) or np.arcsinh(hsig/H₀), exponentiate at predict time. Easy and almost always wins on big-day RMSE without hurting the bulk.                               
+  2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a 10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  have a publishable model.                         
   4. Physics features the linear models can't discover on their own.
     - Wave power proxy H² · T (one column).                                                                                                                                
     - Swell × wind alignment: wind_speed · cos(wind_dir − peak_dir) — onshore vs offshore makes/breaks surf, and it's a multiplicative interaction Ridge can't recover.    
@@ -271,3 +266,8 @@ as the wave-buoy peak_dir_deg encoding in build_buoy_features.
     - Forecast tp_s and peak_dir_deg jointly (multi-output) so downstream code can run a break-specific transform.                                                         
     - Add partitioned swell — sea vs primary vs secondary — if any of the QLD or BOM resources expose it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, 
   ~25km grid) is the highest-ROI external data add. Bimodal swells will never fit a single hsig number.  
+
+8. Recommendation: don't build the target_transform param. Nothing was changed in the repo this turn — the measure-first check did its job and said no. The tail underfit is real, but it's a       
+  fat-tailed-residual-meets-MSE problem, not a skew problem, so a transform structurally can't fix it.
+
+What would target it: a loss that stops hedging the tail — quantile/pinball loss (your README's "add uncertainty" todo), or up-weighting big-wave samples in training.
