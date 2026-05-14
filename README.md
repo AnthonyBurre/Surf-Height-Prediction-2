@@ -1,16 +1,16 @@
 # Surf Height Prediction 2
 
-Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Queensland, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys (Brisbane, Caloundra, Gold Coast, North Moreton Bay) are used as additional input features where their histories overlap.
+Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Australia, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys and nearby wind stations are used as additional input features.
 
 Three installed Python packages back it:
 
-- **`qld_ckan`** — ETL. Downloads yearly records from the QLD Government CKAN Datastore API, unifies schema, and writes a cleaned CSV on a per-source grid. Two sub-packages: `qld_ckan.wave` (wave-buoy network, 30-minute grid) and `qld_ckan.wind` (AWS station 10 meter wind, hourly grid). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
+- **`qld_ckan`** — ETL. Downloads yearly records from the QLD Government CKAN Datastore API, unifies schema, and writes a cleaned CSV on a per-source grid. Two sub-packages: `qld_ckan.wave` (wave-buoy network, 30-minute grid) and `qld_ckan.wind` (air-quality-station 10 metre wind, hourly grid). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
 - **`viz`** — source-agnostic plotting, organised by pipeline stage. Shared time-series primitives (single-source, multi-source overlays, autocorrelation), post-download EDA heatmaps (feature × horizon, cross-source), and post-modeling diagnostics (model comparison, residual analysis).
 - **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and sequence-model forecasters (RNN / GRU / LSTM / TCN) built on PyTorch.
 
 Experiment scripts in `notebooks/` run on top of these packages.
 
-## Problem
+## Objective
 
 Given buoy observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h* — 24 steps ahead. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now").
 
@@ -18,7 +18,7 @@ At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff ba
 
 ## Setup
 
-Requires Python 3.14. Create a venv and install all pinned dependencies (including the editable local packages):
+Suggested Python 3.14. Create a venv and install all pinned dependencies (including the editable local packages):
 
 ```bash
 python3.14 -m venv .venv
@@ -28,10 +28,17 @@ pip install -r requirements.txt
 
 The `data/` directory is gitignored — populate it by running the pipeline.
 
+### Running tests
+
+```bash
+./.venv/bin/pytest src/tests/ -v
+```
+
+Network calls are mocked, so tests run offline.
+
 ## Running the pipeline
 
-`qld_ckan` exposes one CLI with two subcommands — `wave` for the buoy network, `wind` for the AWS stations. Each writes a cleaned CSV to `data/`.
-
+Populate the `data/` directory as desired with these python commands:
 ```bash
 # Default: Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
 ./.venv/bin/python -m qld_ckan wave
@@ -48,7 +55,6 @@ Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-mor
 ./.venv/bin/python -m qld_ckan wind
 
 # Any supported station
-./.venv/bin/python -m qld_ckan wind --station mountain-creek
 ./.venv/bin/python -m qld_ckan wind --station deception-bay
 ```
 
@@ -87,7 +93,7 @@ For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circ
 
 ### Feature scaling
 
-Feature magnitudes span orders of scale — `tp_s` in seconds, `hsig_m` in metres, sin/cos columns already in `[-1, 1]`. Penalised linear models care: an unscaled `alpha` shrinks large-magnitude coefficients unevenly. Scaling is fit on train only and applied to both splits, so no test statistics leak.
+Feature magnitudes span orders of scale — `tp_s` in seconds, `hsig_m` in meters, sin/cos columns already in `[-1, 1]`. Penalised linear models care: an unscaled `alpha` shrinks large-magnitude coefficients unevenly. Scaling is fit on train only and applied to both splits, so no test statistics leak.
 
 ```python
 X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
@@ -139,7 +145,7 @@ All runs use a chronological 80/20 split on the **2015-2024** window — the spa
 | TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.9% |
 | **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.7** | **+26.6%** |
 
-The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`), re-run on the full 4-neighbour set via `notebooks/seq_playground.py` so every row shares the same 7 sources: train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`): train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
 
 ### Lasso: incremental value of each data source
 
@@ -156,13 +162,40 @@ To check that the extra sources actually carry signal, here is a plain `Lasso(al
 
 Every added source helps, but not equally: Brisbane and Gold Coast (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature — while Caloundra, despite being the closest neighbour, barely moves the needle. Wind adds a moderate lift and roughly doubles the kept-coefficient count.
 
-## Running tests
+## Data source
 
-```bash
-./.venv/bin/pytest src/tests/ -v
-```
+All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads — resource IDs stay stable across portal file renames.
 
-Network calls are mocked, so tests run offline.
+Raw records from both sources are naive AEST; `pipeline.clean` localises then converts to UTC, so every unified CSV carries a gap-free `datetime_utc` index — and the wave and wind frames join on a shared UTC axis with no timezone fiddling.
+
+### Wave buoy network
+
+30-minute cadence. Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2013–2025), Gold Coast (2015–2025), North Moreton Bay (2010–2025). Mooloolaba is the prediction target; the others are neighbour-buoy features where their histories overlap.
+
+Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`.
+
+| Column | Description |
+|--------|-------------|
+| `hsig_m` | Significant wave height (meters) |
+| `hmax_m` | Maximum wave height (meters) |
+| `tz_s` | Zero-crossing period (seconds) |
+| `tp_s` | Peak period (seconds) |
+| `peak_dir_deg` | Peak wave direction (degrees) |
+| `sst_c` | Sea surface temperature (°C) |
+
+### Wind (air-quality monitoring network)
+
+Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek (2015–2024) — Sunshine Coast Council station at -26.69, 153.10, effectively co-located with the Mooloolaba wave buoy. Deception Bay (2015–2024) — Moreton Bay station ~50 km south. Both carry the same 10 m wind schema; pollutant and temperature fields are dropped at clean time, leaving:
+
+| Column | Description |
+|--------|-------------|
+| `wind_dir_deg` | Wind direction (degrees true north) |
+| `wind_speed_ms` | Wind speed (meters/second) |
+| `wind_sigma_theta_deg` | Wind direction standard deviation (degrees) |
+| `wind_speed_std_ms` | Wind speed standard deviation (meters/second) |
+
+The wind frame is reindexed onto the 30-minute wave grid by forward-fill: each 30-minute slot inherits the most recent past hourly reading (the 14:30 slot gets the 14:00 value), which is strictly past-only. Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is sin/cos-encoded before being passed to `add_neighbour_features` — the same pattern as the wave-buoy `peak_dir_deg` encoding in `build_buoy_features`.
+
 
 ## Project structure
 
@@ -202,44 +235,6 @@ Surf-Height-Prediction-2/
 ```
 
 **Package layout rationale.** `qld_ckan`, `forecast`, and `viz` are deliberately separated so a trained forecaster can be imported without pulling in HTTP/CKAN dependencies, plotting works against any data source without coupling to the models, and the pipeline can be swapped without touching either. All three live under `src/` with an editable install so scripts share the same import path without `sys.path` hacks.
-
-## Data source
-
-Queensland Government open data portal. Fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads, so resource IDs remain stable across portal file renames. https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation
-
-- **Wave buoy network.** Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2013–2025), Gold Coast (2015–2025), North Moreton Bay (2010–2025).
-
-The unified CSV has a `datetime_utc` index at 30-minute intervals (raw records are AEST; `pipeline.clean` localises then converts to UTC):
-
-| Column | Description |
-|--------|-------------|
-| `hsig_m` | Significant wave height (metres) |
-| `hmax_m` | Maximum wave height (metres) |
-| `tz_s` | Zero-crossing period (seconds) |
-| `tp_s` | Peak period (seconds) |
-| `peak_dir_deg` | Peak wave direction (degrees) |
-| `sst_c` | Sea surface temperature (°C) |
-
-Missing or erroneous readings (`-99.9` in raw files) are replaced with `NaN` and the index is resampled onto a gap-free 30-minute grid.
-
-
-- **Air-quality / meteorology AWS network.** Mountain Creek (2015–2024) — Sunshine Coast station at -26.69, 153.10, with a 10 m ultrasonic wind sensor. Deception Bay (2015–2024) — Moreton Bay station ~50 km south. Both carry the same 10 m wind schema. Pollutant fields are dropped at clean time; only `wind_dir_deg`, `wind_speed_ms`, and the two dispersion stats are kept.
-
-Mountain Creek (Sunshine Coast Council AWS at -26.69, 153.10 — effectively
-co-located with the Mooloolaba wave buoy) carries hourly 10 m wind speed and
-direction back to 2015. The wave history is sliced to 2015-2024 to match the
-wind window — a separate persistence baseline is computed on that same window
-so skill scores are directly comparable to the wind-augmented runs (the
-existing 2015-2025 persistence row in experiments.jsonl is on a different
-test split).
-
-The wind frame is reindexed onto the 30-min wave grid by forward-fill: each
-30-min slot inherits the most recent past hourly reading (e.g. the 14:30
-slot gets the 14:00 wind value), which is strictly past-only.
-
-Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is
-sin/cos-encoded before being passed to add_neighbour_features — same pattern
-as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 
 
 ## todo
