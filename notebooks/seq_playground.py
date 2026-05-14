@@ -47,16 +47,25 @@ CONFIG: dict = {
     #                (matches build_seq_features; what the previous LSTM used)
     # "engineered" — full lag + rolling + momentum matrix
     #                (matches build_buoy_features; what Ridge uses)
-    "feature_mode": "engineered",
+    # "raw" beats "engineered" for every seq model — see seq_sweep.py.
+    "feature_mode": "raw",
 
     # --- model ---
     "model":         "rnn",       # "lstm", "gru", "rnn", "tcn"
 
-    # shared seq-model hyperparams
-    "seq_len":       96,          # 48 × 30 min = 24 h of context
+    # shared seq-model hyperparams.
+    # Defaults below are the best RNN config from notebooks/seq_sweep.py
+    # (RMSE 0.2324, skill +0.234 vs persistence). The key lesson from the
+    # sweep: these models overfit the persistence residual fast — epochs=2-3
+    # beats epochs=5 every time, and "raw" features beat "engineered".
+    # Best config per model class (all on feature_mode="raw", lr=1e-3):
+    #   rnn  : seq_len=48 hidden=128 num_layers=2 epochs=3  → skill +0.234
+    #   gru  : seq_len=48 hidden=64  num_layers=1 epochs=2  → skill +0.230
+    #   lstm : seq_len=48 hidden=64  num_layers=1 epochs=3  → skill +0.157
+    "seq_len":       48,          # 48 × 30 min = 24 h of context
     "hidden":        128,
-    "num_layers":    4,
-    "epochs":        10,
+    "num_layers":    2,
+    "epochs":        3,
     "batch_size":    512,
     "lr":            1e-3,
     "seed":          42,

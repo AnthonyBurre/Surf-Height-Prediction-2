@@ -112,25 +112,18 @@ All scripts are plain `.py` files — run directly:
 
 ## Results
 
-All runs use a chronological 80/20 split. Skill score is vs. persistence on the same test window. Persistence baselines differ across windows (the full-history split, the 2024-2025 neighbour-buoy overlap, and the 2015-2024 wind-overlap window) so RMSEs are only directly comparable within the same window.
+All runs use a chronological 80/20 split on the **2015-2024** window — the span where both wind stations have data. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; the full set of logged runs (other windows, feature combinations, and the sequence-model sweep) is in `experiments.jsonl`.
 
-| Model | Data sources | Window | RMSE | Skill |
-|-------|-------------|--------|------|-------|
-| Persistence (baseline) | Mooloolaba | 2015-2025 | 0.289 | — |
-| Ridge | Mooloolaba | 2015-2025 | 0.265 | +11.3% |
-| HGB (persistence-residual target) | Mooloolaba | 2015-2025 | 0.282 | +5.2% |
-| Ridge + HGB ensemble | Mooloolaba | 2015-2025 | 0.277 | +8.2% |
-| Lasso | Mooloolaba + Brisbane | 2015-2025 | 0.267 | +15.5% |
-| LSTM (15 epochs, seq_len=48, 2 layers) | Mooloolaba + Brisbane | 2015-2025 | 0.362 | −55.2% |
-| Persistence (baseline) | Mooloolaba | 2015-2024 | 0.265 | — |
-| Ridge | Mooloolaba | 2015-2024 | 0.253 | +9.0% |
-| Ridge + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.9% |
-| Lasso + Mountain Creek wind | Mooloolaba + Mountain Creek AWS | 2015-2024 | 0.248 | +12.6% |
-| Persistence (baseline) | Mooloolaba | 2024-2025 | 0.272 | — |
-| Ridge | Mooloolaba + 3 neighbours | 2024-2025 | 0.244 | +19.5% |
-| HGB | Mooloolaba + 3 neighbours | 2024-2025 | 0.258 | +10.0% |
+| Model | Data sources | RMSE | Skill |
+|-------|-------------|------|-------|
+| Persistence (baseline) | Mooloolaba | 0.265 | — |
+| Ridge | Mooloolaba | 0.253 | +9.0% |
+| Ridge + wind | Mooloolaba + Mountain Creek AWS | 0.248 | +12.9% |
+| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs) | Mooloolaba + 3 neighbours + wind | 0.244 | +15.7% |
+| GRU (seq_len=48, hidden=64, 1 layer, 2 epochs) | Mooloolaba + 3 neighbours + wind | 0.233 | +23.0% |
+| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs) | Mooloolaba + 3 neighbours + wind | 0.232 | +23.4% |
 
-The full set of logged runs is in `experiments.jsonl`.
+The sequence models are the best configs from a hyperparameter sweep (`notebooks/seq_sweep.py`): train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
 
 ## Running tests
 
@@ -218,19 +211,12 @@ sin/cos-encoded before being passed to add_neighbour_features — same pattern
 as the wave-buoy peak_dir_deg encoding in build_buoy_features.
 
 
-## License
-
-See [LICENSE](LICENSE).
-
-
-
 ## todo
   2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      
   underfit there. Adding features like Hs² or interaction terms could help.                                                                                                
-  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then
-  exponentiating predictions) can reduce this regression-to-the-mean effect. 
+  3. Check the target distribution — if large waves are rare in training data, the model learned to hedge toward the mean. Log-transforming Hs before fitting (then exponentiating predictions) can reduce this regression-to-the-mean effect. 
 
-    Big-leverage modelling changes
+### Big-leverage modelling changes
 
   2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a
   10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  
@@ -250,8 +236,7 @@ See [LICENSE](LICENSE).
   true blind set, OR move to an expanding-window CV (sklearn TimeSeriesSplit) for hyperparameter selection. Right now skill comparisons across experiments.jsonl rows      
   aren't statistically clean.
 
-
-    7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
+7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
   significant wave height"), but I'd at least:              
     - Forecast tp_s and peak_dir_deg jointly (multi-output) so downstream code can run a break-specific transform.                                                         
     - Add partitioned swell — sea vs primary vs secondary — if any of the QLD or BOM resources expose it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, 
