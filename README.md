@@ -58,7 +58,7 @@ Supported buoys: `mooloolaba`, `brisbane`, `caloundra`, `gold-coast`, `north-mor
 ./.venv/bin/python -m qld_ckan wind --station deception-bay
 ```
 
-Supported stations: `mountain-creek` (Sunshine Coast, effectively co-located with the Mooloolaba buoy) and `deception-bay` (Moreton Bay, ~50 km south of Mooloolaba).
+Supported stations: `mountain-creek`, `deception-bay`
 
 ## Modelling
 
@@ -126,8 +126,12 @@ All scripts are plain `.py` files — run directly:
 
 | script | description |
 |--------|-------------|
-| `mooloolaba_brisbane_lstm.py` | LSTM on the same window. Convergence findings across several architecture configs documented in the script header (~25 min CPU per run). |
-| `buoy_eda.py` | Multi-buoy EDA: coverage, distributions, seasonality, direction, cross-source correlation. |
+| `linear_playground.py` | Linear / tree model playground (Ridge / Lasso / HGB). A single `CONFIG` dict controls the data window, neighbour buoys, wind stations, `FeatureConfig` knobs, HGB residual-target mode, and an optional nanmean ensemble. |
+| `seq_playground.py` | Sequence-model playground (RNN / GRU / LSTM / TCN). Single `CONFIG` dict for data window, sources, raw-vs-engineered feature mode, model class, and hyperparameters; auto-detects device and logs each run. |
+| `seq_sweep.py` | Small low-epoch hyperparameter sweep over the RNN / GRU / LSTM forecasters, reusing `seq_playground`'s data loading. Logs every run under the `seqsweep` prefix. |
+| `wave_eda.py` | Wave-only EDA across all five buoys: coverage, distributions, seasonality, direction, autocorrelation, cross-source correlation. Saves seven `wave_*` PNGs to `notebooks/figures/`. |
+| `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves five `wind_*` PNGs to `notebooks/figures/`. |
+| `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
 
 ## Results
 
@@ -145,11 +149,11 @@ All runs use a chronological 80/20 split on the **2015-2024** window — the spa
 | TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 4 neighbours + wind | 23.0 | +24.9% |
 | **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 4 neighbours + wind | **22.7** | **+26.6%** |
 
-The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`): train on `raw` circular-encoded channels and keep epochs low (2-3) — they fit the persistence residual and overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN. Once 2025 wind data lands, the whole project moves to a single 2015-2025 window.
+The sequence models are the best per-class configs from a hyperparameter sweep (`notebooks/seq_sweep.py`): keep epochs low (2-3) since they overfit fast. They now use `scaler="robust"` (median/IQR) for their in-forecaster input/target scaling; relative to the previous `"standard"` (mean/std) scaling that helped the simpler recurrent nets (RNN +2.7, GRU +2.6 skill points) but was a wash for LSTM and the TCN — wave data's heavy tail favours a robust scale, but only where the model wasn't already absorbing it. The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the full 7-source feature set (4 neighbour buoys + 2 wind stations, 263 features), with the linear models trained on robust-scaled features (`fc.scale_features`); the TCN edges out a plain Ridge as the best single model, and a nanmean ensemble of Ridge + Lasso + HGB is still the strongest overall. Adding Caloundra is a wash-to-slight-loss for the recurrent models (RNN/GRU/LSTM) but a small gain for the TCN.
 
 ### Lasso: incremental value of each data source
 
-To check that the extra sources actually carry signal, here is a plain `Lasso(alpha=0.001)` trained on the Mooloolaba buoy alone, then on Mooloolaba plus each extra source *in isolation* (not cumulative). All rows share the identical 2015-2024 chronological 80/20 split, so RMSE and Skill are directly comparable; "Non-zero coefs" is how many of the feature columns Lasso kept, and "Top feature" is the largest `|coef|`.
+To check that the extra sources actually carry signal, here is a plain `Lasso(alpha=0.001)` trained on the Mooloolaba buoy alone, then on Mooloolaba plus each extra source *in isolation* (not cumulative). "Non-zero coefs" is how many of the feature columns Lasso kept, and "Top feature" is the largest `|coef|`.
 
 | Data sources | RMSE (cm) | Skill | Non-zero coefs | Top feature |
 |--------------|-----------|-------|----------------|-------------|
@@ -160,17 +164,19 @@ To check that the extra sources actually carry signal, here is a plain `Lasso(al
 | + North Moreton Bay | 25.2 | +10.1% | 53 / 120 | `hsig_m` |
 | + wind | 24.6 | +14.2% | 86 / 211 | `hsig_m` |
 
-Every added source helps, but not equally: Brisbane and Gold Coast (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature — while Caloundra, despite being the closest neighbour, barely moves the needle. Wind adds a moderate lift and roughly doubles the kept-coefficient count.
+Every added source helps, but not equally: Brisbane and Gold Coast (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature — while Caloundra, despite being the closest neighbour, barely moves the needle.
 
 ## Data source
 
-All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads — resource IDs stay stable across portal file renames.
+All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability.
 
-Raw records from both sources are naive AEST; `pipeline.clean` localises then converts to UTC, so every unified CSV carries a gap-free `datetime_utc` index — and the wave and wind frames join on a shared UTC axis with no timezone fiddling.
+Raw records from both sources are naive AEST; `pipeline.clean` localises then converts to UTC, so every unified CSV carries a gap-free `datetime_utc` index.
+
+**Coverage:** everything is used over a **2015-onward** window. A few datasets are published further back (Caloundra to 2013, North Moreton Bay to 2010), because of how the portal packages older years. Wave data currently runs to 2025; wind runs to 2024 and the 2025 wind year will be folded in once the portal publishes it.
 
 ### Wave buoy network
 
-30-minute cadence. Mooloolaba (2015–2025), Brisbane (2015–2025), Caloundra (2013–2025), Gold Coast (2015–2025), North Moreton Bay (2010–2025). Mooloolaba is the prediction target; the others are neighbour-buoy features where their histories overlap.
+30-minute cadence. Mooloolaba is the prediction target; Brisbane, Caloundra, Gold Coast, and North Moreton Bay feed in as neighbour-buoy features where their histories overlap.
 
 Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`.
 
@@ -185,7 +191,7 @@ Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`
 
 ### Wind (air-quality monitoring network)
 
-Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek (2015–2024) — Sunshine Coast Council station at -26.69, 153.10, effectively co-located with the Mooloolaba wave buoy. Deception Bay (2015–2024) — Moreton Bay station ~50 km south. Both carry the same 10 m wind schema; pollutant and temperature fields are dropped at clean time, leaving:
+Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek is right by Mooloolaba and Deception Bay is ~50 km south on Moreton Bay. Pollutant and temperature fields are dropped at clean time, leaving:
 
 | Column | Description |
 |--------|-------------|
@@ -194,7 +200,7 @@ Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring s
 | `wind_sigma_theta_deg` | Wind direction standard deviation (degrees) |
 | `wind_speed_std_ms` | Wind speed standard deviation (meters/second) |
 
-The wind frame is reindexed onto the 30-minute wave grid by forward-fill: each 30-minute slot inherits the most recent past hourly reading (the 14:30 slot gets the 14:00 value), which is strictly past-only. Wind direction is circular (359° and 1° are 2° apart, not 358°), so it is sin/cos-encoded before being passed to `add_neighbour_features` — the same pattern as the wave-buoy `peak_dir_deg` encoding in `build_buoy_features`.
+The wind frame is reindexed onto the 30-minute wave grid by forward-fill. Wind direction is circular, so it is sin/cos-encoded before being passed to `add_neighbour_features` — the same pattern as the wave-buoy `peak_dir_deg` encoding in `build_buoy_features`.
 
 
 ## Project structure
@@ -238,31 +244,19 @@ Surf-Height-Prediction-2/
 
 
 ## todo
-  2. Check if bias is conditional — plot residuals vs. predicted value or vs. swell period/direction. If bias is concentrated at high wave heights, your model may be      underfit there. Adding features like Hs² or interaction terms could help.                                                                    
 
-### Big-leverage modelling changes
+1. **Add uncertainty.** Surfline customers care about ranges, not points. Quantile HGB (`HistGradientBoostingRegressor(loss="quantile", quantile=q)`) for P10/P50/P90 is a ~10-line addition; conformalised intervals over Ridge are similar. Extend `metrics.summarise` (currently MAE/RMSE/Bias/Skill) with pinball loss / coverage. This is also the fix for the confirmed tail underfit: residuals-vs-predicted plots show bias concentrated at high wave heights - a fat-tailed-residual-meets-MSE problem, not a skew problem, so a target transform structurally can't fix it. A loss that stops hedging the tail (quantile/pinball, or up-weighting big-wave samples in training) targets it directly.
 
-  2. Add uncertainty. Surfline customers care about ranges, not points. Quantile HGB (HistGradientBoostingRegressor(loss="quantile", quantile=q)) for P10/P50/P90 is a 10-line addition; conformalised intervals over Ridge are similar. Right now metrics.summarise returns MAE/RMSE/Bias/Skill — extend with pinball loss / coverage and you  have a publishable model.                         
-  4. Physics features the linear models can't discover on their own.
-    - Wave power proxy H² · T (one column).                                                                                                                                
-    - Swell × wind alignment: wind_speed · cos(wind_dir − peak_dir) — onshore vs offshore makes/breaks surf, and it's a multiplicative interaction Ridge can't recover.    
-    - tp / wind_speed as a wind-sea vs groundswell separator.                                                                                                              
-  These three columns alone often add ~3–5% skill at our scale.                                                                                                            
-  5. Multi-horizon forecasts are where you actually beat persistence. At 12h the autocorr is 0.81 — persistence is brutal. At 24/48/72h it collapses. A single-output      
-  direct forecaster at h=12 sells the model short. HORIZON_STEPS in forecast/config.py:11 is centralised (good), but the pipeline only fits one h. Either loop over        
-  horizons or use a MultiOutputRegressor — the API on Ridge/HGB is one line. This is the change that would make the project read as "a surf forecast model" rather than "a 
-  +12h hsig regressor".                                                                                                                                                    
-  6. Honest test harness. A single 80/20 split means the "test set" is implicitly used during model selection across the 42 logged runs. Hold out the last 6 months as a
-  true blind set, OR move to an expanding-window CV (sklearn TimeSeriesSplit) for hyperparameter selection. Right now skill comparisons across experiments.jsonl rows      
-  aren't statistically clean.
+2. **Physics features the linear models can't discover on their own.**
+    - Wave power proxy H² · T (one column).
+    - Swell × wind alignment: `wind_speed · cos(wind_dir − peak_dir)` - onshore vs offshore makes/breaks surf, and it's a multiplicative interaction Ridge can't recover.
+    - `tp / wind_speed` as a wind-sea vs groundswell separator.
+  These three columns alone often add ~3–5% skill at our scale.
 
-7. hsig_m ≠ surf height. A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. The README is honest about this ("Predicts       
-  significant wave height"), but I'd at least:              
-    - Forecast tp_s and peak_dir_deg jointly (multi-output) so downstream code can run a break-specific transform.                                                         
-    - Add partitioned swell — sea vs primary vs secondary — if any of the QLD or BOM resources expose it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, 
-  ~25km grid) is the highest-ROI external data add. Bimodal swells will never fit a single hsig number.  
+3. **Multi-horizon forecasts.** At 12h the autocorr is 0.81 - persistence is brutal. At 24/48/72h it collapses. A single-output direct forecaster at h=12 sells the model short. `HORIZON_STEPS` in `forecast/config.py:11` is centralised (good), but the pipeline only fits one h. Either loop over horizons or use a `MultiOutputRegressor` - the API on Ridge/HGB is one line. This is the change that would make the project read as "a surf forecast model" rather than "a +12h hsig regressor". (Distinct from item 5's multi-*variable* output, though both use `MultiOutputRegressor`.)
 
-8. Recommendation: don't build the target_transform param. Nothing was changed in the repo this turn — the measure-first check did its job and said no. The tail underfit is real, but it's a       
-  fat-tailed-residual-meets-MSE problem, not a skew problem, so a transform structurally can't fix it.
+4. **Honest test harness.** A single 80/20 split means the "test set" is implicitly used during model selection across the logged runs. Hold out the last 6 months as a true blind set, OR move to an expanding-window CV (`sklearn` `TimeSeriesSplit`) for hyperparameter selection. Right now skill comparisons across `experiments.jsonl` rows aren't statistically clean.
 
-What would target it: a loss that stops hedging the tail — quantile/pinball loss (your README's "add uncertainty" todo), or up-weighting big-wave samples in training.
+5. **`hsig_m` ≠ surf height.** A 2 m hsig from 90° at 14s breaks very differently from 2 m from 150° at 8s on the same beach. Forecast `tp_s` and `peak_dir_deg` jointly (multi-output - see item 3) so downstream code can run a break-specific transform.
+
+6. **Partitioned swell / external hindcast data.** Add partitioned swell - sea vs primary vs secondary - if any QLD or BOM resource exposes it. Otherwise integrating NOAA WAVEWATCH III hindcast (free, global, ~25km grid) is the highest-ROI external data add. Bimodal swells will never fit a single hsig number.
