@@ -93,14 +93,12 @@ For sequence models (LSTM / GRU / TCN), use `fc.build_seq_features(df)` — circ
 
 ### Feature scaling
 
-Feature magnitudes span orders of scale — `tp_s` in seconds, `hsig_m` in meters, sin/cos columns already in `[-1, 1]`. Penalised linear models care: an unscaled `alpha` shrinks large-magnitude coefficients unevenly. Scaling is fit on train only and applied to both splits, so no test statistics leak.
-
 ```python
 X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
 X_tr_s, X_te_s = fc.scale_features(X_tr_imp, X_te_imp, method="robust")  # or "standard"
 ```
 
-`fc.scale_features` defaults to `RobustScaler` (median/IQR) — wave data is heavy-tailed, so storm-spike outliers would inflate a standard-deviation scale. **Circular `*_sin`/`*_cos` columns are passed through untouched**: they are already in `[-1, 1]`, and scaling a sin/cos pair independently would distort the unit-circle geometry. Tree models (HGB) are scale-invariant and are left on the raw matrix.
+`fc.scale_features` defaults to `RobustScaler` (median/IQR) — wave data is heavy-tailed, so storm-spike outliers would inflate a standard-deviation scale. Circular `*_sin`/`*_cos` columns are passed through untouched. Tree models (HGB) are scale-invariant and are left on the raw matrix.
 
 Sequence models scale internally instead — `_TorchSeqForecaster` standardises its own input channels and target (fit on train), selectable per the `scaler` argument (`"standard"` mean/std, or `"robust"` median/IQR), so they take the unscaled `build_seq_features` frame directly.
 
@@ -114,7 +112,7 @@ Sequence models scale internally instead — `_TorchSeqForecaster` standardises 
 
 ## Logging experiments
 
-`fc.evaluate_and_log(...)` is a drop-in for `fc.evaluate(...)` that appends a record to `experiments.jsonl` (repo root, committed). For results computed outside the harness (ensembles, custom loops), use `fc.log_run(result, ...)`. Each record captures `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`; the `git_sha` carries a `-dirty` suffix when the working tree has uncommitted changes. Read the log back as a DataFrame with `fc.read_log()`.
+`fc.evaluate_and_log(...)` is a drop-in for `fc.evaluate(...)` that appends a record to `experiments.jsonl` (repo root, committed). For results computed outside the harness (ensembles, custom loops), use `fc.log_run(result, ...)`. Each record captures `{timestamp, git_sha, name, model_class, hyperparams, data_sources, n_features, train, test, metrics, extra}`. Read the log back as a DataFrame with `fc.read_log()`.
 
 ## Experiment scripts
 
@@ -135,7 +133,7 @@ All scripts are plain `.py` files — run directly:
 
 ## Results
 
-All runs use a chronological 80/20 split on the **2015-2024** window — the span where both wind stations have data. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; the full set of logged runs (other windows, feature combinations, and the sequence-model sweep) is in `experiments.jsonl`.
+All runs use a chronological 80/20 split on the **2015-2024** window — the span where both wind stations have data. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; find the full set of logged runs (other windows, feature combinations, model sweeps) in `experiments.jsonl`.
 
 | Model | Data sources | RMSE (cm) | Skill |
 |-------|-------------|------|-------|
@@ -200,7 +198,7 @@ Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring s
 | `wind_sigma_theta_deg` | Wind direction standard deviation (degrees) |
 | `wind_speed_std_ms` | Wind speed standard deviation (meters/second) |
 
-The wind frame is reindexed onto the 30-minute wave grid by forward-fill. Wind direction is circular, so it is sin/cos-encoded before being passed to `add_neighbour_features` — the same pattern as the wave-buoy `peak_dir_deg` encoding in `build_buoy_features`.
+The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
 
 ## Project structure
