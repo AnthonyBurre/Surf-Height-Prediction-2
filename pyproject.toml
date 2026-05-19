@@ -11,11 +11,18 @@ dependencies = [
     "numpy>=2.0",
     "pandas>=2.3",
     "requests>=2.32",
+    "scikit-learn>=1.7",
 ]
 
-# The full env (matplotlib, seaborn, torch, scikit-learn, pytest) is pinned in
-# requirements.txt and is the documented install path. ``pip install -e .``
-# alone gives you the ETL packages; the rest comes from requirements.txt.
+[project.optional-dependencies]
+forecast = ["torch>=2.11,<2.12"]
+viz = [
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

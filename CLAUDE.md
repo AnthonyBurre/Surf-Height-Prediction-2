@@ -2,18 +2,18 @@
 
 ## Environment
 
-Python venv is at `./.venv`. Use `./.venv/bin/python` and `./.venv/bin/pip` for all Python commands — do not call the system `python3` or `pip`.
+Project uses `uv` for dependency management. Venv is at `./.venv` (managed by uv). Use `./.venv/bin/python` and `./.venv/bin/pytest` for all Python commands — do not call the system `python3` or `pip`. To install or change deps, run `uv sync --all-extras` (rebuilds `.venv` from `pyproject.toml` + `uv.lock`); never `pip install` directly.
 
 ## Commands
 
-- `./.venv/bin/python -m qld_ckan wave [--buoy NAME]` — downloads and saves a buoy CSV to `data/{buoy}_wave_data_{years}.csv`. The wind sub-command is `python -m qld_ckan wind [--station NAME]` → `data/{station}_wind_data_{years}.csv`. Package is installed editable (`pip install -e .`), so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named qld_ckan`, re-run `./.venv/bin/pip install -e .`.
+- `./.venv/bin/python -m qld_ckan wave [--buoy NAME]` — downloads and saves a buoy CSV to `data/{buoy}_wave_data_{years}.csv`. The wind sub-command is `python -m qld_ckan wind [--station NAME]` → `data/{station}_wind_data_{years}.csv`. Package is installed editable by `uv sync`, so `src/` is on `sys.path` without a `PYTHONPATH` prefix. If imports fail with `No module named qld_ckan`, re-run `uv sync --all-extras`.
 - `./.venv/bin/pytest src/tests/ -v` — pytest rootdir discovery + `src/tests/__init__.py` handle path resolution.
 
 ## Non-obvious points
 
 - **Index is UTC everywhere downstream of `pipeline.clean`**, even though the raw CKAN records are naive AEST. `datetime_utc` is therefore the index name throughout — no Brisbane-time conversion happens for analysis or plots.
 
-- **Sequence models live in `src/forecast/neural.py`** (`SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`). They window their own input (raw channels + sin/cos direction, no lag/rolling), so pass them the `encode_circular` frame — not the full lag-feature matrix used by the linear/tree models. Requires `torch` from the `forecast` extra (`pip install -e '.[forecast]'`).
+- **Sequence models live in `src/forecast/neural.py`** (`SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`). They window their own input (raw channels + sin/cos direction, no lag/rolling), so pass them the `encode_circular` frame — not the full lag-feature matrix used by the linear/tree models. Requires `torch` from the `forecast` extra (installed by default via `uv sync --all-extras`; to install only this extra, `uv sync --extra forecast`).
 
 - **Never Read anything under `data/` directly** — the unified CSV is ~10 MB and will blow up token usage. Inspect data via small Python/pandas scripts that print summaries (`df.describe()`, `df.head()`, etc.).
 
