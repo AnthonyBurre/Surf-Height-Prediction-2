@@ -95,6 +95,8 @@ class _TorchSeqForecaster:
         verbose: bool = False,
         residual: bool = True,
         scaler: str = "standard",
+        weight_decay: float = 0.0,
+        rnn_dropout: float = 0.0,
     ) -> None:
         if scaler not in ("standard", "robust"):
             raise ValueError(
@@ -113,6 +115,8 @@ class _TorchSeqForecaster:
         self.verbose = verbose
         self.residual = residual
         self.scaler = scaler
+        self.weight_decay = weight_decay
+        self.rnn_dropout = rnn_dropout
         self._model: nn.Module | None = None
         self._x_center: np.ndarray | None = None
         self._x_scale: np.ndarray | None = None
@@ -175,7 +179,7 @@ class _TorchSeqForecaster:
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, drop_last=False)
 
         model = self._build_encoder(Xa.shape[1]).to(self.device)
-        opt = torch.optim.Adam(model.parameters(), lr=self.lr)
+        opt = torch.optim.Adam(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         loss_fn = nn.MSELoss()
 
         model.train()
@@ -248,9 +252,21 @@ class _TorchSeqForecaster:
 
 
 class _RNNHead(nn.Module):
-    def __init__(self, cell_cls: type, n_features: int, hidden: int, num_layers: int) -> None:
+    def __init__(
+        self,
+        cell_cls: type,
+        n_features: int,
+        hidden: int,
+        num_layers: int,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
-        self.rnn = cell_cls(n_features, hidden, num_layers=num_layers, batch_first=True)
+        # PyTorch ignores dropout when num_layers == 1 and warns; suppress by zeroing.
+        rnn_dropout = dropout if num_layers > 1 else 0.0
+        self.rnn = cell_cls(
+            n_features, hidden, num_layers=num_layers, batch_first=True,
+            dropout=rnn_dropout,
+        )
         self.fc = nn.Linear(hidden, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -262,21 +278,21 @@ class SimpleRNNForecaster(_TorchSeqForecaster):
     """Vanilla tanh RNN — the simplest recurrent baseline."""
 
     def _build_encoder(self, n_features: int) -> nn.Module:
-        return _RNNHead(nn.RNN, n_features, self.hidden, self.num_layers)
+        return _RNNHead(nn.RNN, n_features, self.hidden, self.num_layers, self.rnn_dropout)
 
 
 class GRUForecaster(_TorchSeqForecaster):
     """Gated Recurrent Unit — fewer parameters than LSTM, often comparable in skill."""
 
     def _build_encoder(self, n_features: int) -> nn.Module:
-        return _RNNHead(nn.GRU, n_features, self.hidden, self.num_layers)
+        return _RNNHead(nn.GRU, n_features, self.hidden, self.num_layers, self.rnn_dropout)
 
 
 class LSTMForecaster(_TorchSeqForecaster):
     """Long Short-Term Memory — the default sequence model for a reason."""
 
     def _build_encoder(self, n_features: int) -> nn.Module:
-        return _RNNHead(nn.LSTM, n_features, self.hidden, self.num_layers)
+        return _RNNHead(nn.LSTM, n_features, self.hidden, self.num_layers, self.rnn_dropout)
 
 
 class _TCNBlock(nn.Module):

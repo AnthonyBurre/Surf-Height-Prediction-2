@@ -1,19 +1,24 @@
-"""Hyperparameter sweep for the RNN / GRU / LSTM sequence forecasters.
+"""Hyperparameter sweep for the RNN / GRU / LSTM / TCN sequence forecasters.
 
-Run:  ./.venv/bin/python notebooks/seq_sweep.py
+Run all four:    ./.venv/bin/python notebooks/seq_sweep.py
+Run one model:   ./.venv/bin/python notebooks/seq_sweep.py rnn
+                                                            gru | lstm | tcn
 
 Reuses seq_playground's data-loading / feature-building helpers so the
 sweep sees exactly the same inputs a single playground run would. Builds
 the data + persistence baseline once, then loops a small grid over each
-model class. Every run is logged to experiments.jsonl under the
+selected model class. Every run is logged to experiments.jsonl under the
 ``seqsweep`` prefix so results stay distinguishable from manual runs.
 
-The grid is deliberately small and low-epoch: history (experiments.jsonl)
-shows these models overfit the persistence residual quickly, so the goal
-is to find the few low-capacity / low-epoch corners that actually beat
-persistence rather than to train hard.
+The grid pairs each capacity corner with regularization variants
+(weight_decay on Adam + inter-layer dropout on stacked RNN cells, native
+dropout on TCN). History (experiments.jsonl) shows these models overfit
+the persistence residual quickly, so the goal is to find configs where
+regularization buys an extra epoch or two of useful training without
+overshooting.
 """
 
+import sys
 import time
 import warnings
 
@@ -33,19 +38,61 @@ WIND_STATIONS = ["mountain-creek", "deception-bay"]
 FEATURE_MODE = "raw"  # raw = 24 circular-encoded channels; fastest + best historically
 RUN_PREFIX = "seqsweep"
 
-# --- the grid ---
-MODELS = ["rnn", "gru", "lstm", "tcn"]
-GRID = [
-    # (seq_len, hidden, num_layers, epochs)
-    (48, 32, 1, 3),
-    (48, 64, 1, 3),
-    (48, 64, 2, 3),
-    (48, 128, 1, 3),
-    (48, 128, 2, 3),
-    (24, 64, 1, 3),
-]
-# extra epoch probe on the smallest-capacity corner (overfitting check)
-EPOCH_PROBE = [(48, 64, 1, 2), (48, 64, 1, 5)]
+ALL_MODELS = ["rnn", "gru", "lstm", "tcn"]
+
+# Per-model grid. Each row is
+# (seq_len, hidden, num_layers, epochs, weight_decay, rnn_dropout).
+# rnn_dropout is ignored for TCN (it has its own ``dropout`` kwarg, kept at
+# the architecture default of 0.1 for TCN runs below).
+#
+# Anchor configs are the README-headline best per model; surrounding rows
+# probe whether regularization unlocks extra capacity / epochs without
+# overshooting the persistence residual.
+GRIDS: dict[str, list[tuple]] = {
+    "rnn": [
+        # README anchor: sl48 h128 L2 ep3 (RMSE 0.232, +23.4%)
+        (48, 128, 2, 3, 0.0,    0.0),   # baseline (sanity)
+        (48, 128, 2, 3, 1e-5,   0.0),   # weight decay only
+        (48, 128, 2, 3, 1e-4,   0.0),
+        (48, 128, 2, 3, 1e-4,   0.1),   # + inter-layer dropout
+        (48, 128, 2, 5, 1e-4,   0.1),   # extra epochs, regularized
+        (48, 128, 2, 5, 1e-4,   0.2),
+        (48, 256, 2, 5, 1e-4,   0.2),   # bigger, harder regularization
+        (48,  64, 2, 5, 1e-4,   0.1),   # smaller capacity, more epochs
+    ],
+    "gru": [
+        # README anchor: sl48 h64 L1 ep2 (RMSE 0.236, +20.9%)
+        (48,  64, 1, 2, 0.0,    0.0),   # baseline (sanity)
+        (48,  64, 1, 3, 1e-4,   0.0),   # +1 epoch with weight decay
+        (48,  64, 1, 5, 1e-4,   0.0),
+        (48, 128, 2, 3, 1e-4,   0.1),   # bigger + dropout
+        (48, 128, 2, 5, 1e-4,   0.1),
+        (48, 128, 2, 5, 1e-4,   0.2),
+        (48,  64, 2, 5, 1e-4,   0.1),
+    ],
+    "lstm": [
+        # README anchor: sl48 h64 L1 ep3 (RMSE 0.259, +5.3%) — easy bar
+        (48,  64, 1, 3, 0.0,    0.0),   # baseline (sanity)
+        (48,  64, 1, 3, 1e-4,   0.0),
+        (48,  64, 1, 5, 1e-4,   0.0),
+        (48, 128, 2, 3, 1e-4,   0.1),
+        (48, 128, 2, 5, 1e-4,   0.1),
+        (48, 128, 2, 5, 1e-4,   0.2),
+        (48,  64, 2, 5, 1e-4,   0.1),
+    ],
+    "tcn": [
+        # README anchor: sl48 channels=(64,) ep2 (RMSE 0.230, +24.9%)
+        # For TCN, hidden = channel width; num_layers = stack depth.
+        # rnn_dropout col is unused; TCN dropout is set per-row below.
+        (48,  64, 1, 2, 0.0,    0.10),   # baseline (sanity, native dropout=0.1)
+        (48,  64, 1, 3, 1e-4,   0.10),
+        (48,  64, 1, 3, 1e-4,   0.20),
+        (48,  64, 2, 3, 1e-4,   0.10),
+        (48,  64, 2, 3, 1e-4,   0.20),
+        (48,  64, 4, 3, 1e-4,   0.20),   # full receptive field
+        (48, 128, 1, 3, 1e-4,   0.20),
+    ],
+}
 
 BATCH_SIZE = 512
 LR = 1e-3
@@ -79,27 +126,35 @@ def build_data():
     }
 
 
-def make_model(model: str, seq_len: int, hidden: int, num_layers: int, epochs: int):
+def make_model(model: str, seq_len: int, hidden: int, num_layers: int,
+               epochs: int, weight_decay: float, rnn_dropout: float):
     common = dict(
         seq_len=seq_len, epochs=epochs,
         batch_size=BATCH_SIZE, lr=LR, seed=SEED, device="cpu", verbose=False,
-        scaler=SCALER,
+        scaler=SCALER, weight_decay=weight_decay,
     )
     if model == "tcn":
         # TCN has no hidden/num_layers; reuse those grid axes as the
-        # width/depth of a uniform dilated-conv stack.
-        return fc.TCNForecaster(channels=(hidden,) * num_layers, **common)
+        # width/depth of a uniform dilated-conv stack. The "rnn_dropout"
+        # grid column is repurposed as the TCN's native conv dropout.
+        return fc.TCNForecaster(
+            channels=(hidden,) * num_layers, dropout=rnn_dropout, **common,
+        )
     return {
         "rnn": fc.SimpleRNNForecaster,
         "gru": fc.GRUForecaster,
         "lstm": fc.LSTMForecaster,
-    }[model](hidden=hidden, num_layers=num_layers, **common)
+    }[model](hidden=hidden, num_layers=num_layers, rnn_dropout=rnn_dropout, **common)
 
 
 def run_one(d: dict, model: str, seq_len: int, hidden: int, num_layers: int,
-            epochs: int) -> dict:
-    name = f"{RUN_PREFIX}_{model}_{FEATURE_MODE}_sl{seq_len}_h{hidden}_L{num_layers}_ep{epochs}"
-    m = make_model(model, seq_len, hidden, num_layers, epochs)
+            epochs: int, weight_decay: float, rnn_dropout: float) -> dict:
+    wd_tag = f"_wd{weight_decay:.0e}".replace("e-0", "e-") if weight_decay else ""
+    do_tag = f"_do{rnn_dropout:g}" if rnn_dropout else ""
+    name = (f"{RUN_PREFIX}_{model}_{FEATURE_MODE}_sl{seq_len}_h{hidden}"
+            f"_L{num_layers}_ep{epochs}{wd_tag}{do_tag}")
+    m = make_model(model, seq_len, hidden, num_layers, epochs,
+                   weight_decay, rnn_dropout)
     t0 = time.time()
     m.fit(d["X_tr"], d["y_tr"])
     preds = m.predict(d["X_te"])
@@ -120,22 +175,25 @@ def run_one(d: dict, model: str, seq_len: int, hidden: int, num_layers: int,
             "num_layers": num_layers, "epochs": epochs, "lr": LR,
             "batch_size": BATCH_SIZE, "scaler": SCALER, "device": "cpu",
             "imputation": "mean",
+            "weight_decay": weight_decay, "rnn_dropout": rnn_dropout,
             "elapsed_min": round(elapsed / 60, 2), "sweep": True,
         },
     )
     row = {
         "model": model, "seq_len": seq_len, "hidden": hidden,
         "num_layers": num_layers, "epochs": epochs,
+        "weight_decay": weight_decay, "rnn_dropout": rnn_dropout,
         "RMSE": metrics["RMSE"], "Skill": metrics["SkillVsBaseline"],
         "MAE": metrics["MAE"], "Bias": metrics["Bias"], "secs": round(elapsed, 1),
     }
     flag = "  <-- beats persistence" if metrics["SkillVsBaseline"] > 0 else ""
-    print(f"  {name:48s}  RMSE {metrics['RMSE']:.4f}  "
-          f"Skill {metrics['SkillVsBaseline']:+.4f}  ({elapsed:5.1f}s){flag}", flush=True)
+    print(f"  {name:62s}  RMSE {metrics['RMSE']:.4f}  "
+          f"Skill {metrics['SkillVsBaseline']:+.4f}  ({elapsed:5.1f}s){flag}",
+          flush=True)
     return row
 
 
-def main() -> None:
+def main(models: list[str]) -> None:
     print(f"building data ({FEATURE_MODE} mode)...", flush=True)
     d = build_data()
     print(f"persistence RMSE: {d['persist_rmse']:.4f}   "
@@ -143,26 +201,36 @@ def main() -> None:
           f"test={len(d['y_te']):,})\n", flush=True)
 
     rows: list[dict] = []
-    for model in MODELS:
+    for model in models:
         print(f"=== {model.upper()} ===", flush=True)
-        for seq_len, hidden, num_layers, epochs in GRID:
-            rows.append(run_one(d, model, seq_len, hidden, num_layers, epochs))
-        for seq_len, hidden, num_layers, epochs in EPOCH_PROBE:
-            rows.append(run_one(d, model, seq_len, hidden, num_layers, epochs))
+        for cfg in GRIDS[model]:
+            rows.append(run_one(d, model, *cfg))
         print(flush=True)
 
     summary = pd.DataFrame(rows).sort_values("Skill", ascending=False)
-    print("=== full sweep, best skill first ===")
+    print("=== sweep, best skill first ===")
     print(summary.to_string(index=False))
 
     print("\n=== best config per model ===")
-    for model in MODELS:
-        best = summary[summary["model"] == model].iloc[0]
+    for model in models:
+        sub = summary[summary["model"] == model]
+        if sub.empty:
+            continue
+        best = sub.iloc[0]
         beat = "BEATS baseline" if best["Skill"] > 0 else "below baseline"
         print(f"  {model:5s}: sl{int(best['seq_len'])} h{int(best['hidden'])} "
-              f"L{int(best['num_layers'])} ep{int(best['epochs'])}  "
+              f"L{int(best['num_layers'])} ep{int(best['epochs'])} "
+              f"wd{best['weight_decay']:g} do{best['rnn_dropout']:g}  "
               f"RMSE {best['RMSE']:.4f}  Skill {best['Skill']:+.4f}  ({beat})")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        requested = [m.lower() for m in sys.argv[1:]]
+        bad = [m for m in requested if m not in ALL_MODELS]
+        if bad:
+            sys.exit(f"unknown model(s) {bad!r}; choose from {ALL_MODELS}")
+        models = requested
+    else:
+        models = ALL_MODELS
+    main(models)

@@ -68,6 +68,7 @@ CONFIG: dict = {
     "epochs":        3,
     "batch_size":    512,
     "lr":            1e-3,
+    "weight_decay":  1e-5,        # Adam L2; best-config: rnn 1e-5, gru/lstm 1e-4, tcn n/a
     "seed":          42,
 
     # input/target scaling done inside the forecaster (fit on train):
@@ -126,6 +127,7 @@ def build_model(cfg: dict, device: str):
     common = dict(
         seq_len=cfg["seq_len"], hidden=cfg["hidden"], num_layers=cfg["num_layers"],
         epochs=cfg["epochs"], batch_size=cfg["batch_size"], lr=cfg["lr"],
+        weight_decay=cfg.get("weight_decay", 0.0),
         seed=cfg["seed"], device=device, verbose=cfg["verbose_train"],
         scaler=cfg["scaler"],
     )
@@ -222,6 +224,7 @@ def main() -> None:
                 "num_layers":       cfg["num_layers"],
                 "epochs":           cfg["epochs"],
                 "lr":               cfg["lr"],
+                "weight_decay":     cfg.get("weight_decay", 0.0),
                 "batch_size":       cfg["batch_size"],
                 "scaler":           cfg["scaler"],
                 "device":           device,
