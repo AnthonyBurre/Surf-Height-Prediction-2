@@ -44,8 +44,6 @@ Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring s
 
 The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
-
-
 ### Coverage
 
 The per-source / per-year completeness grids below are produced by `notebooks/wave_eda.py` and `notebooks/wind_eda.py`. Grey cells mean the station wasn't deployed yet; red cells flag partial years (deployment mid-year, sensor outages, the wide-bay 2019-2021 sparsity).
@@ -64,8 +62,7 @@ The coverage grids define the trade space for any experiment. The choice is a br
 
 Each option assumes the same chronological 80/20 split and the same +12 h horizon. The Results section below runs (2) as the headline and includes a (2)-vs-(3) comparison; (1) is on the table for any experiment that benefits from extra pre-2015 neighbour history without needing a wider source set. Choice of window is a `restrict_to_years(...)` call in the script, not a re-download — every CSV in `data/` already carries its full available range.
 
-## Modelling
-
+## Data Prep
 
 ### Feature engineering
 
@@ -104,9 +101,7 @@ X_2025_p = preproc.transform(X_2025)  # raises if any fit-time column is missing
 `transform()` enforces the schema the preprocessor was fitted on: any missing required column raises `ValueError`; extra columns (e.g. a new wind station appearing later) are silently dropped. This catches the failure mode where a held-out year's feature matrix doesn't line up with the training-time decisions — without the class, that mismatch would surface as a silently wrong prediction.
 
 
-
-
-## Results
+## Model Selection and Tuning
 
 All runs use a chronological 80/20 split on the **2015-2024 AEST** window (Brisbane time = UTC+10, no DST) — the span where the full-coverage wind stations have data. Skill score is vs. persistence on the same test split. The default source set is **5 neighbour buoys** (Brisbane, Caloundra, Gold Coast, North Moreton Bay, Tweed Heads) and **3 wind stations** (Mountain Creek, Deception Bay, Lytton); Palm Beach (2017-onwards) and Southport (mid-2018-onwards) are held out for the wider-set / shorter-window comparison below. The table below is a curated cross-section; find the full set of logged runs in `experiments.jsonl`.
 
@@ -181,7 +176,7 @@ Every added source helps, but not equally:
 
 The ablation is single-source-vs-baseline, not cumulative; the full-source playground runs in the Results table above stack everything and outperform every row here.
 
-## Model performance
+## Real World Performance
 
 Each new year is scored as a true blind set against three pre-committed models - best linear, best neural, best ensemble. The QLD wind 2025 release is the current blocker on the first row.
 
@@ -199,56 +194,16 @@ Scoring a new year against these committed candidates is a re-fit of the same re
 | 2025 | TCN | _TBD_ | _TBD_ |
 | 2025 | Ensemble | _TBD_ | _TBD_ |
 
-## Project structure
-
-```
-Surf-Height-Prediction-2/
-├── src/
-│   ├── qld_ckan/               # ETL package — QLD CKAN Datastore client
-│   │   ├── __init__.py         # session, paginate_records, fetch_all_years, unify_frames
-│   │   ├── __main__.py         # `python -m qld_ckan {wave,wind} [...]` entry point
-│   │   ├── wave/               # wave-buoy network (30-min grid)
-│   │   │   ├── constants.py    # CKAN resource IDs per buoy per year
-│   │   │   ├── downloader.py   # per-year fetch + pre-2017 column normalisation
-│   │   │   └── pipeline.py     # unify / clean / export CSV
-│   │   └── wind/               # AWS station 10 m wind (hourly grid)
-│   │       ├── constants.py
-│   │       ├── downloader.py
-│   │       └── pipeline.py
-│   ├── forecast/               # modelling package
-│   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
-│   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
-│   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
-│   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
-│   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
-│   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
-│   │   ├── preprocess.py       # drop_sparse_columns, mean_impute, scale_features + Preprocessor (fit/transform/save/load)
-│   │   ├── evaluate.py         # fit / predict / score harness + compare helper
-│   │   └── experiments.py      # append-only JSONL run log + read_log reader
-│   ├── viz/                    # plotting package — split by pipeline stage
-│   │   ├── timeseries.py       # SHARED:        plot_series, plot_multi_source, autocorrelation_curve
-│   │   ├── eda.py              # POST-DOWNLOAD: feature × horizon, cross-source heatmaps
-│   │   └── diagnostics.py      # POST-MODELING: rmse_bar, residual_timeseries, residual_by_bin
-│   └── tests/                  # pytest suite (network-mocked)
-├── notebooks/                  # experiment scripts
-├── data/                       # gitignored — generated by `python -m qld_ckan {wave,wind}`
-├── experiments.jsonl           # append-only run log (committed)
-├── pyproject.toml              # deps + forecast/viz extras (managed by uv)
-└── uv.lock                     # pinned dependency graph (regen: uv lock)
-```
-
-**Package layout rationale.** The three packages are deliberately split so a trained forecaster can be imported without HTTP/CKAN deps, and `viz` stays decoupled from the models. All three live under `src/` via an editable install so scripts share the import path without `sys.path` hacks.
 
 ## Reproducibility
 
-## Setup
+### Setup
 
 With [uv](https://docs.astral.sh/uv/) installed:
+
 ```bash
 uv sync --all-extras
 ```
-
-The `data/` directory is gitignored — generate it by running the pipeline.
 
 ### Running tests
 
@@ -258,9 +213,19 @@ The `data/` directory is gitignored — generate it by running the pipeline.
 
 Network calls are mocked, so tests run offline.
 
+### Packages
+
+- **`qld_ckan`**: Downloads yearly records from the QLD CKAN Datastore API, unifies the schema, and writes a cleaned CSV per source.
+    - `qld_ckan.wave` (wave buoys) 
+    - `qld_ckan.wind` (air-quality-station 10 m wind)
+- **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-modelling diagnostics.
+- **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and PyTorch sequence forecasters (RNN / GRU / LSTM / TCN).
+
+Experiment scripts in `notebooks/` run on top of these packages.
+
 ### Running the pipeline
 
-Populate `data/` with these commands (one CSV per source):
+Generate `data/` with these commands (one CSV per source):
 
 ```bash
 # Wave — default Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
@@ -270,7 +235,7 @@ Populate `data/` with these commands (one CSV per source):
 ./.venv/bin/python -m qld_ckan wind [--station deception-bay|lytton|southport]
 ```
 
-Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the registry before download — handy for a quick experiment on a sub-window without re-fetching the full history. Bounds filter on the resource-id dict's year keys; the output filename reflects the filtered range.
+Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the registry before download.
 
 ```bash
 # Brisbane buoy, 2018-2020 only → data/brisbane_wave_data_2018-2020.csv
@@ -288,15 +253,17 @@ result = fc.evaluate_and_log(
 print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ..., "SkillVsBaseline": ...}
 ```
 
-### packages
-Three packages under `src/`:
+### Available forecasters
 
-- **`qld_ckan`** — ETL. Downloads yearly records from the QLD CKAN Datastore API, unifies the schema, and writes a cleaned CSV per source. Sub-packages: `qld_ckan.wave` (wave buoys) and `qld_ckan.wind` (air-quality-station 10 m wind). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
-- **`viz`** — source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-modelling diagnostics.
-- **`forecast`** — modelling. Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and PyTorch sequence forecasters (RNN / GRU / LSTM / TCN).
+| family          | classes                                                                         |
+|-----------------|---------------------------------------------------------------------------------|
+| baselines       | `PersistenceForecaster`, `SeasonalNaiveForecaster`, `ClimatologyHourForecaster` |
+| linear / tree   | any scikit-learn regressor (Ridge, Lasso, HGB, …)                               |
+| sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`       |
 
-Experiment scripts in `notebooks/` run on top of these packages.
+### Logging experiments
 
+`fc.evaluate_and_log(...)` is a drop-in for `fc.evaluate(...)` that appends a record to `experiments.jsonl` (committed at repo root); `fc.log_run(result, ...)` covers results computed outside the harness. Read the log back as a DataFrame with `fc.read_log()`.
 
 ### Experiment scripts
 
@@ -316,17 +283,6 @@ All scripts are plain `.py` files — run directly:
 | `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves six `wind_*` PNGs to `notebooks/figures/`. |
 | `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
 
-### Available forecasters
-
-| family          | classes                                                                         |
-|-----------------|---------------------------------------------------------------------------------|
-| baselines       | `PersistenceForecaster`, `SeasonalNaiveForecaster`, `ClimatologyHourForecaster` |
-| linear / tree   | any scikit-learn regressor (Ridge, Lasso, HGB, …)                               |
-| sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`       |
-
-## Logging experiments
-
-`fc.evaluate_and_log(...)` is a drop-in for `fc.evaluate(...)` that appends a record to `experiments.jsonl` (committed at repo root); `fc.log_run(result, ...)` covers results computed outside the harness. Read the log back as a DataFrame with `fc.read_log()`.
 
 
 ## Future Expansions
