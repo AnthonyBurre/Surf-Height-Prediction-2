@@ -10,7 +10,11 @@ non-zero coefficient count, and the single largest-|coef| feature.
 The output is a Markdown table written verbatim to stdout, ready to paste into
 the README's "Lasso: incremental value of each data source" section.
 
-Each row also writes to experiments.jsonl under run_name="ablation".
+Logging to ``experiments.jsonl`` is OFF by default — the table is fully
+reproducible from this script's stdout, and re-running for verification (e.g.
+after a constants change or AEST audit) would otherwise stack 9 identical
+rows per run into the log. Flip ``LOG_TO_JSONL = True`` if you want a fresh
+sweep to land in the log alongside the playground runs.
 """
 import warnings
 
@@ -28,6 +32,7 @@ YEAR_MIN = None
 YEAR_MAX = 2024
 TEST_FRAC = 0.2
 LASSO_KW = {"alpha": 0.001, "max_iter": 10000}
+LOG_TO_JSONL = False
 
 # label → (neighbours, wind_stations). Empty lists = source disabled.
 CONFIGS: list[tuple[str, list[str], list[str]]] = [
@@ -101,6 +106,7 @@ def run_one(
             "n_neighbours": len(neighbours),
             "n_wind_stations": len(wind_stations),
         },
+        log=LOG_TO_JSONL,
     )
 
     coef = result.model.coef_
