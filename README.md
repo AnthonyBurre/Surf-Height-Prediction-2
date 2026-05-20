@@ -31,6 +31,8 @@ The CKAN catalogue also hosts multi-year *historical* bundles for several buoys 
 | `peak_dir_deg` | Peak wave direction (degrees) |
 | `sst_c` | Sea surface temperature (°C) |
 
+![Wave coverage](notebooks/figures/wave_coverage.png)
+
 ### Wind (air-quality monitoring network)
 
 Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek pairs with the Mooloolaba buoy, Deception Bay sits ~50 km south on Moreton Bay, Lytton is at the mouth of the Brisbane River (paired with the Brisbane buoy), and Southport sits on the Gold Coast (paired with the Gold Coast / Palm Beach buoys). Pollutant and temperature fields are dropped at clean time, leaving:
@@ -44,23 +46,14 @@ Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring s
 
 The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
-### Coverage
-
-The per-source / per-year completeness grids below are produced by `notebooks/wave_eda.py` and `notebooks/wind_eda.py`. Grey cells mean the station wasn't deployed yet; red cells flag partial years (deployment mid-year, sensor outages, the wide-bay 2019-2021 sparsity).
-
-![Wave coverage](notebooks/figures/wave_coverage.png)
-
 ![Wind coverage](notebooks/figures/wind_coverage.png)
 
 ### Dataset selection: short vs long runtime
 
 The coverage grids define the trade space for any experiment. The choice is a breadth-vs-depth call across two axes — how far back to train, and how many neighbour sources to include:
 
-1. **Long window, narrow set (2010-2024 AEST, Mooloolaba target + 3 neighbours, 2 wind stations).** North Moreton Bay (2010 bundle), plus Mountain Creek + Deception Bay wind cover the full window; Brisbane and Tweed Heads join from 2012, Caloundra from 2013, Gold Coast from 2014. The Mooloolaba target itself starts 2015 — so practically this option is "Mooloolaba 2015-2024 with pre-2015 neighbour context", useful for sequence models whose lookback can stretch back further than the target.
-2. **Standard window, full neighbour set (2015-2024 AEST, 5 buoys + 3 wind stations).** The default for the headline results. Lytton wind starts 2015, so this window is the deepest one where every "always-on" source has data. Mooloolaba + Brisbane / Caloundra / Gold Coast / North Moreton Bay / Tweed Heads neighbours and Mountain Creek / Deception Bay / Lytton wind — 10 years of training, no late-deployment gaps.
-3. **Short window, wide set (2019-2024 AEST, 7 buoys + 4 wind stations).** Palm Beach (deployed 2017), Southport wind (mid-2018), and Wide Bay (2019, the only buoy upstream of northerly swells) only join here. Six years of training in exchange for two extra neighbour buoys and one extra wind station.
-
-Each option assumes the same chronological 80/20 split and the same +12 h horizon. The Results section below runs (2) as the headline and includes a (2)-vs-(3) comparison; (1) is on the table for any experiment that benefits from extra pre-2015 neighbour history without needing a wider source set. Choice of window is a `restrict_to_years(...)` call in the script, not a re-download — every CSV in `data/` already carries its full available range.
+1. **Standard window, full neighbour set (2015-2024 AEST, 5 buoys + 3 wind stations).** The default for the headline results. Lytton wind starts 2015, so this window is the deepest one where every "always-on" source has data. Mooloolaba + Brisbane / Caloundra / Gold Coast / North Moreton Bay / Tweed Heads neighbours and Mountain Creek / Deception Bay / Lytton wind — 10 years of training, no late-deployment gaps.
+2. **Short window, wide set (2019-2024 AEST, 7 buoys + 4 wind stations).** Palm Beach (deployed 2017), Southport wind (mid-2018), and Wide Bay (2019, the only buoy upstream of northerly swells) only join here. Six years of training in exchange for two extra neighbour buoys and one extra wind station.
 
 ## Data Prep
 
@@ -205,7 +198,7 @@ With [uv](https://docs.astral.sh/uv/) installed:
 uv sync --all-extras
 ```
 
-### Running tests
+#### Running tests
 
 ```bash
 ./.venv/bin/pytest src/tests/ -v
