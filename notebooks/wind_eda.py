@@ -2,8 +2,9 @@
 
 Run:  ./.venv/bin/python notebooks/wind_eda.py
 
-Saves five PNGs to notebooks/figures/ (all prefixed ``wind_``):
+Saves six PNGs to notebooks/figures/ (all prefixed ``wind_``):
   wind_coverage.png            — % valid wind_speed_ms per station x year
+  wind_column_coverage.png     — % valid per channel per station (all years pooled)
   wind_timeseries.png          — overlaid wind speed per station, 2020
   wind_autocorrelation.png     — ACF (72h window, 12h horizon marked)
   wind_direction_roses.png     — polar bar charts per station
@@ -28,11 +29,13 @@ FIG_DIR.mkdir(exist_ok=True)
 # Stations to load. The first is treated as the primary for any single-station
 # panels. Each station must already have a CSV under ``data/`` produced by
 # ``python -m qld_ckan wind --station <slug>``.
-STATIONS = ["mountain-creek", "deception-bay"]
+STATIONS = ["mountain-creek", "deception-bay", "lytton", "southport"]
 
 STATION_COLORS = {
     "mountain-creek": "#e07b39",
     "deception-bay":  "#3b8db4",
+    "lytton":         "#2ca02c",
+    "southport":      "#9467bd",
 }
 
 
@@ -43,7 +46,7 @@ def load_wind(station: str) -> pd.DataFrame:
             f"No wind CSV for station={station!r} in {DATA_DIR}. "
             f"Run `python -m qld_ckan wind --station {station}` to generate it."
         )
-    return pd.read_csv(matches[-1], parse_dates=["datetime_utc"], index_col="datetime_utc")
+    return pd.read_csv(matches[-1], parse_dates=["datetime"], index_col="datetime")
 
 
 def load_all() -> dict[str, pd.DataFrame]:
@@ -96,6 +99,49 @@ def plot_coverage(winds: dict[str, pd.DataFrame]) -> None:
             v = coverage.loc[name, yr]
             if not np.isnan(v) and v < 80:
                 print(f"    {name} {yr}: {v:.0f}%")
+
+
+# --------------------------------------------------------------------------- #
+# Figure 1b — Per-column coverage (all years pooled)
+# --------------------------------------------------------------------------- #
+def plot_column_coverage(winds: dict[str, pd.DataFrame]) -> None:
+    """% valid per channel per station — surfaces single-column gaps the
+    year-level chart hides. ``wind_speed_ms`` may look fully populated while
+    a sibling column (e.g. ``wind_speed_std_ms`` at Lytton) is mostly empty;
+    mean-imputation of a near-constant feature then quietly poisons any
+    gradient-based model that ingests it.
+    """
+    rows = []
+    for name, wind in winds.items():
+        rows.append(pd.Series(
+            {col: float(wind[col].notna().mean()) * 100 for col in wind.columns},
+            name=name,
+        ))
+    coverage = pd.DataFrame(rows)
+
+    fig, ax = plt.subplots(figsize=(1.4 * len(coverage.columns) + 4, 0.55 * len(coverage) + 1.8))
+    sns.heatmap(
+        coverage, annot=True, fmt=".0f", cmap="RdYlGn",
+        vmin=0, vmax=100, linewidths=0.4, linecolor="white",
+        cbar_kws={"label": "% valid (all years pooled)", "shrink": 0.8}, ax=ax,
+    )
+    ax.set(
+        title="Wind: per-column completeness (all years pooled, lower = more imputation pressure)",
+        xlabel="Column", ylabel="",
+    )
+    ax.tick_params(axis="x", labelrotation=30)
+    fig.tight_layout()
+    out = FIG_DIR / "wind_column_coverage.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {out.name}")
+
+    print("  Columns with < 50 % valid:")
+    for name in coverage.index:
+        for col in coverage.columns:
+            v = coverage.loc[name, col]
+            if v < 50:
+                print(f"    {name}.{col}: {v:.0f}%  (mean-imputation will turn this near-constant)")
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +265,7 @@ def main() -> None:
     winds = load_all()
 
     print("\n--- Figure 1: coverage ---");             plot_coverage(winds)
+    print("\n--- Figure 1b: per-column coverage ---"); plot_column_coverage(winds)
     print("\n--- Figure 2: time series (2020) ---");   plot_timeseries(winds)
     print("\n--- Figure 3: autocorrelation ---");      plot_autocorrelation(winds)
     print("\n--- Figure 4: direction roses ---");      plot_direction_roses(winds)

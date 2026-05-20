@@ -40,7 +40,7 @@ def test_clean_renames_all_columns(raw_frame, standard_rows):
 def test_clean_sets_datetime_index(raw_frame, standard_rows):
     result = clean(raw_frame(standard_rows))
     assert isinstance(result.index, pd.DatetimeIndex)
-    assert result.index.name == "datetime_utc"
+    assert result.index.name == "datetime"
 
 
 def test_clean_sorts_index(raw_frame, standard_rows):
@@ -63,20 +63,20 @@ def test_clean_preserves_row_count_when_no_bad_rows(raw_frame, standard_rows):
     assert len(clean(raw_frame(standard_rows))) == 2
 
 
-def test_clean_preserves_values(raw_frame, standard_rows, ts_utc):
+def test_clean_preserves_values(raw_frame, standard_rows, ts_aest):
     result = clean(raw_frame(standard_rows))
-    assert result.loc[ts_utc("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
+    assert result.loc[ts_aest("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
 
 
-def test_clean_index_is_utc_with_aest_offset_applied(raw_frame, standard_rows):
+def test_clean_index_is_aest_tz_aware(raw_frame, standard_rows):
     """Source timestamps are naive AEST (UTC+10); after clean the index must
-    be tz-aware UTC and the rows must have shifted back by 10h. Asserting the
-    tz directly catches a regression that drops the tz_convert step (the
-    index name 'datetime_utc' is just a string and would still match)."""
+    be tz-aware Australia/Brisbane with the original wall-clock times
+    intact. Asserting the tz directly catches a regression that drops the
+    tz_localize step (the index name 'datetime' is just a string and would
+    still match)."""
     result = clean(raw_frame(standard_rows))
-    assert str(result.index.tz) == "UTC"
-    # 2017-01-01 00:00 AEST → 2016-12-31 14:00 UTC
-    assert result.index[0] == pd.Timestamp("2016-12-31 14:00", tz="UTC")
+    assert str(result.index.tz) == "Australia/Brisbane"
+    assert result.index[0] == pd.Timestamp("2017-01-01 00:00", tz="Australia/Brisbane")
 
 
 @pytest.mark.parametrize(
@@ -90,28 +90,28 @@ def test_clean_index_is_utc_with_aest_offset_applied(raw_frame, standard_rows):
         ("SST", "sst_c"),
     ],
 )
-def test_clean_replaces_sentinel_with_nan(raw_col, clean_col, raw_frame, standard_rows, ts_utc):
+def test_clean_replaces_sentinel_with_nan(raw_col, clean_col, raw_frame, standard_rows, ts_aest):
     """Every measurement column must honour the -99.9 sentinel — a missed
     column lets garbage through as a real reading (e.g. peak_dir_deg=-99.9
     survives encode_circular as a normal sin/cos pair)."""
     standard_rows[0][raw_col] = -99.9
     result = clean(raw_frame(standard_rows))
-    assert np.isnan(result.loc[ts_utc("2017-01-01 00:00:00"), clean_col])
+    assert np.isnan(result.loc[ts_aest("2017-01-01 00:00:00"), clean_col])
     # other measurement columns at the same row unchanged
-    assert not np.isnan(result.loc[ts_utc("2017-01-01 00:30:00"), clean_col])
+    assert not np.isnan(result.loc[ts_aest("2017-01-01 00:30:00"), clean_col])
 
 
-def test_clean_coerces_string_numerics(raw_frame, standard_rows, ts_utc):
+def test_clean_coerces_string_numerics(raw_frame, standard_rows, ts_aest):
     # Simulate CKAN returning numerics as strings, including the sentinel
     standard_rows[0]["Hs"] = "1.10"
     standard_rows[1]["Hs"] = "-99.9"
     result = clean(raw_frame(standard_rows))
     assert result["hsig_m"].dtype.kind == "f"
-    assert result.loc[ts_utc("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
-    assert np.isnan(result.loc[ts_utc("2017-01-01 00:30:00"), "hsig_m"])
+    assert result.loc[ts_aest("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
+    assert np.isnan(result.loc[ts_aest("2017-01-01 00:30:00"), "hsig_m"])
 
 
-def test_clean_reindexes_gaps_as_nan_rows(raw_frame, ts_utc):
+def test_clean_reindexes_gaps_as_nan_rows(raw_frame, ts_aest):
     # Two timestamps 1.5 hours apart leave two missing 30-min slots between.
     rows = [
         {"Date/Time": pd.Timestamp("2017-01-01 00:00:00"), "Hs": 1.10, "Hmax": 1.9,
@@ -121,11 +121,11 @@ def test_clean_reindexes_gaps_as_nan_rows(raw_frame, ts_utc):
     ]
     result = clean(raw_frame(rows))
     assert len(result) == 4
-    assert np.isnan(result.loc[ts_utc("2017-01-01 00:30:00"), "hsig_m"])
-    assert np.isnan(result.loc[ts_utc("2017-01-01 01:00:00"), "hsig_m"])
+    assert np.isnan(result.loc[ts_aest("2017-01-01 00:30:00"), "hsig_m"])
+    assert np.isnan(result.loc[ts_aest("2017-01-01 01:00:00"), "hsig_m"])
 
 
-def test_clean_drops_duplicate_timestamps(raw_frame, standard_rows, ts_utc):
+def test_clean_drops_duplicate_timestamps(raw_frame, standard_rows, ts_aest):
     # Duplicate the first row's timestamp with different values
     standard_rows.append({
         "Date/Time": pd.Timestamp("2017-01-01 00:00:00"),
@@ -135,7 +135,7 @@ def test_clean_drops_duplicate_timestamps(raw_frame, standard_rows, ts_utc):
     result = clean(raw_frame(standard_rows))
     # Only 2 unique timestamps, and the first-seen value wins.
     assert len(result) == 2
-    assert result.loc[ts_utc("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
+    assert result.loc[ts_aest("2017-01-01 00:00:00"), "hsig_m"] == pytest.approx(1.10)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ def test_run_writes_csv_and_creates_parent_dir(tmp_path, raw_frame, standard_row
     assert output.exists()
     assert len(result) == 2
 
-    reloaded = pd.read_csv(output, parse_dates=["datetime_utc"], index_col="datetime_utc")
+    reloaded = pd.read_csv(output, parse_dates=["datetime"], index_col="datetime")
     assert set(reloaded.columns) == set(result.columns)
     assert len(reloaded) == len(result)
 

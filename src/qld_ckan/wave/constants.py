@@ -2,8 +2,20 @@
 # even when the portal renames or replaces the underlying file.
 #
 # BUOYS is keyed by short slug; each value maps year → CKAN resource ID.
-# Mooloolaba is the primary forecasting target. Brisbane and North Moreton Bay
-# have full multi-year histories; Caloundra and Gold Coast go back to ~2013/2015.
+# Only resources whose native cadence is the project's 30-minute grid are
+# included — the deep historical bundles for Mooloolaba (2000-2014, 1 h),
+# Brisbane (1976-2011, 12 h), Gold Coast (1987-2014, 6 h), and Tweed Heads
+# (1995-2011, 1 h) are intentionally excluded. The North Moreton Bay
+# 2010-2015 bundle and the Caloundra 2013-2015 bundle are 30 min and stay.
+# Coverage by buoy:
+#   mooloolaba         — 2015-onwards
+#   caloundra          — 2013-onwards (2013-2015 bundle + per-year 2016+)
+#   brisbane           — 2012-onwards (per-year 2012/13/14 + 2015+)
+#   north-moreton-bay  — 2010-onwards (2010-2015 bundle + per-year 2016+)
+#   gold-coast         — 2014-onwards (per-year 2014 + 2015+)
+#   tweed-heads        — 2012-onwards (per-year 2012/13/14 + 2015+)
+#   palm-beach         — 2017-onwards (deployed mid-2017)
+#   wide-bay           — 2019-onwards (deployed 2019)
 BUOYS: dict[str, dict[int, str]] = {
     "mooloolaba": {
         2015: "81df149b-67fc-4e5c-8ab8-b479001e04eb",
@@ -33,9 +45,11 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "d276f08f-5853-493e-a607-0dfa60f6e850",
     },
     "brisbane": {
-        # 2012: "cf594247-4da2-4802-8a86-ea7b514df3e7",
-        # 2013: "5e648c66-e67f-4b76-9ba3-5a281bec7ccf",
-        # 2014: "b328dc90-4f16-4c63-a577-ad954b5e898c",
+        # 2012-2014 are per-year 30-minute files; the 1976-2011 bundle is
+        # 12-hour cadence and is therefore excluded.
+        2012: "cf594247-4da2-4802-8a86-ea7b514df3e7",
+        2013: "5e648c66-e67f-4b76-9ba3-5a281bec7ccf",
+        2014: "b328dc90-4f16-4c63-a577-ad954b5e898c",
         2015: "53cfe709-5b7f-4339-b8c7-919cdcdb79ae",
         2016: "19b441dd-2539-497b-b11c-78a85def64c9",
         2017: "3a833ec3-2685-4999-af4f-f10d304042f6",
@@ -63,6 +77,9 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "95654258-beee-4b4e-b506-e49b6657e5dd",
     },
     "gold-coast": {
+        # 2014 is a per-year 30-minute file; the 1987-2014 historical bundle
+        # is 6-hour cadence and is therefore excluded.
+        2014: "9c1270fd-6626-4ed4-b629-73f687dbb04f",
         2015: "30cdfd68-52e9-4c5c-933c-03c2fed5a11a",
         2016: "c5e598d5-5a9a-45be-9da6-a9f47042e006",
         2017: "f85931b4-926a-49e3-9e56-d65bd49a9f14",
@@ -76,6 +93,49 @@ BUOYS: dict[str, dict[int, str]] = {
         2024: "67c8cf49-cb29-4cd1-86ff-d61bfdb8cbba",
         2025: "a8a12129-c99d-45f6-832b-a5cee4754b54",
     },
+    "tweed-heads": {
+        # Furthest-south SE QLD buoy; jointly operated with NSW. 2012-2014 are
+        # per-year 30-minute files; the 1995-2011 bundle is 1-hour cadence and
+        # is therefore excluded.
+        2012: "4ca6d884-f135-44bb-9c0e-a437fdafd247",
+        2013: "5d269a88-afec-4aeb-88c9-903d924cf30b",
+        2014: "34c769b5-8a14-49f7-ae43-eaba453875f4",
+        2015: "0a6087f2-d917-4009-b4d1-1b0b91fa9a87",
+        2016: "74341a48-933c-4b64-b496-59dde6ac5e57",
+        2017: "8d6b1736-7ae2-484b-bf75-a7ef0564da63",
+        2018: "34860155-b168-4b81-b48f-dc362b9807bd",
+        2019: "7caf54dd-356e-4d9d-862d-f0fd86cad69e",
+        2020: "25bf55cc-4c7b-4ca6-9f07-e2f197314b02",
+        2021: "68005deb-5f79-4808-bc16-3b5378eda85a",
+        2022: "14eb287f-8084-42a9-a4e0-035db5ff283b",
+        2023: "45968dc5-40f4-46e0-9c8f-915947f879b3",
+        2024: "7f6c61b7-5a19-48c9-a609-1d1bed8b73fe",
+        2025: "bc667055-aa5c-4449-ba26-3953e99ccf67",
+    },
+    "palm-beach": {
+        # Inshore Gold Coast site ~25 km south of the gold-coast buoy; deployed
+        # 2017, so 2015-2016 are unavailable.
+        2017: "4da6606f-cd31-4e55-8e28-058e86e5d8c4",
+        2018: "8b238223-0936-4e67-985f-f747f0b8933c",
+        2019: "fd2898c4-cbf1-490f-a417-524cd1aa966c",
+        2020: "f9428896-ed80-4a7c-a94c-f8ba1e305cae",
+        2021: "524a0e1d-8a05-4d04-abfd-6d45f29538ad",
+        2022: "8351f685-066f-4a75-80f6-cbd71decd3e9",
+        2023: "c5df48a2-9c02-46c9-bfe3-d4df4b5d7375",
+        2024: "e290a20a-7a2c-4004-bbb7-a379ff12bb02",
+        2025: "6fa75109-b4b5-4360-a3e4-ed6dfd80efc3",
+    },
+    "wide-bay": {
+        # Northern buoy ~120 km north of Mooloolaba; the only buoy upstream of
+        # northerly swells. Deployed 2019, so 2015-2018 are unavailable.
+        2019: "ac458084-beb6-4845-92e5-06b35bce32c4",
+        2020: "7880277a-abe1-46f7-b157-06b95d5bcbcf",
+        2021: "a6d74800-9c8a-4d0e-826b-b139d0d8bfe5",
+        2022: "1ce31773-1031-4deb-81ac-70f7d3f23111",
+        2023: "1bf8a850-dd59-441b-b0dd-11acec002227",
+        2024: "327b3beb-ed49-44eb-9146-7c335962f17c",
+        2025: "ae855051-21d5-4913-9797-04645fd7abf6",
+    },
 }
 
 # Backwards-compatible alias for the primary Mooloolaba buoy.
@@ -86,7 +146,7 @@ SENTINEL_VALUE = -99.9
 
 # Final standardised column names applied after per-year normalisation
 COLUMN_RENAME_MAP: dict[str, str] = {
-    "Date/Time": "datetime_utc",
+    "Date/Time": "datetime",
     "Hs": "hsig_m",
     "Hmax": "hmax_m",
     "Tz": "tz_s",

@@ -1,9 +1,10 @@
-"""Wave-only EDA across all five buoys.
+"""Wave-only EDA across all eight buoys.
 
 Run:  ./.venv/bin/python notebooks/wave_eda.py
 
-Saves seven PNGs to notebooks/figures/ (all prefixed ``wave_``):
+Saves eight PNGs to notebooks/figures/ (all prefixed ``wave_``):
   wave_coverage.png                  — % valid hsig_m per buoy x year
+  wave_column_coverage.png           — % valid per channel per buoy (all years pooled)
   wave_distributions.png             — violins (full history) + annual mean lines
   wave_seasonality.png               — monthly climatology + peak swell direction rose
   wave_timeseries.png                — Mooloolaba 2020 trace: hsig_m, tp_s, hmax_m
@@ -28,8 +29,10 @@ from forecast.data import load_data
 FIG_DIR = Path(__file__).parent / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
-BUOYS = ["mooloolaba", "caloundra", "brisbane", "gold-coast", "north-moreton-bay"]
-NEIGHBOURS = ["caloundra", "brisbane", "gold-coast", "north-moreton-bay"]
+BUOYS = ["mooloolaba", "caloundra", "brisbane", "gold-coast", "north-moreton-bay",
+         "palm-beach", "tweed-heads", "wide-bay"]
+NEIGHBOURS = ["caloundra", "brisbane", "gold-coast", "north-moreton-bay",
+              "palm-beach", "tweed-heads", "wide-bay"]
 
 COLORS: dict[str, str] = {
     "mooloolaba":        "#1f77b4",
@@ -37,6 +40,9 @@ COLORS: dict[str, str] = {
     "brisbane":          "#2ca02c",
     "gold-coast":        "#d62728",
     "north-moreton-bay": "#9467bd",
+    "palm-beach":        "#e377c2",
+    "tweed-heads":       "#8c564b",
+    "wide-bay":          "#17becf",
 }
 
 
@@ -95,6 +101,39 @@ def plot_coverage(buoys: dict[str, pd.DataFrame]) -> None:
             v = coverage.loc[name, yr]
             if not np.isnan(v) and v < 80:
                 print(f"    {name} {yr}: {v:.0f}%")
+
+
+# --------------------------------------------------------------------------- #
+# Figure 1b — Per-column coverage (all years pooled)
+# --------------------------------------------------------------------------- #
+def plot_column_coverage(buoys: dict[str, pd.DataFrame]) -> None:
+    """% valid per channel per buoy — surfaces sst/peak-direction gaps the
+    hsig_m year-level chart hides. Same intent as the wind equivalent.
+    """
+    rows = []
+    for name, df in buoys.items():
+        rows.append(pd.Series(
+            {col: float(df[col].notna().mean()) * 100 for col in df.columns},
+            name=name,
+        ))
+    coverage = pd.DataFrame(rows)
+
+    fig, ax = plt.subplots(figsize=(1.4 * len(coverage.columns) + 4, 0.55 * len(coverage) + 1.8))
+    sns.heatmap(
+        coverage, annot=True, fmt=".0f", cmap="RdYlGn",
+        vmin=50, vmax=100, linewidths=0.4, linecolor="white",
+        cbar_kws={"label": "% valid (all years pooled)", "shrink": 0.8}, ax=ax,
+    )
+    ax.set(
+        title="Wave: per-column completeness (all years pooled)",
+        xlabel="Column", ylabel="",
+    )
+    ax.tick_params(axis="x", labelrotation=30)
+    fig.tight_layout()
+    out = FIG_DIR / "wave_column_coverage.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {out.name}")
 
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +349,7 @@ def main() -> None:
     mool = buoys["mooloolaba"]
 
     print("\n--- Figure 1: coverage ---");                plot_coverage(buoys)
+    print("\n--- Figure 1b: per-column coverage ---");    plot_column_coverage(buoys)
     print("\n--- Figure 2: distributions & trends ---");  plot_distributions(buoys)
     print("\n--- Figure 3: seasonality & direction ---"); plot_seasonality(buoys)
     print("\n--- Figure 4: time series (2020) ---");      plot_timeseries(mool)

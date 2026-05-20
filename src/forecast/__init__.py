@@ -33,6 +33,7 @@ from .config import (
 )
 from .data import (
     NEIGHBOUR_FILES,
+    SOURCE_TZ,
     WIND_FILES,
     chronological_split,
     load_data,
@@ -40,8 +41,19 @@ from .data import (
     load_wind,
     make_target,
     restrict_to_overlap,
+    restrict_to_years,
 )
-from .evaluate import EvaluationResult, compare, evaluate, mean_impute, scale_features
+from .evaluate import (
+    EvaluationResult,
+    compare,
+    evaluate,
+)
+from .preprocess import (
+    Preprocessor,
+    drop_sparse_columns,
+    mean_impute,
+    scale_features,
+)
 from .experiments import (
     compose_run_name,
     evaluate_and_log,
@@ -92,6 +104,7 @@ __all__ = [
     "TARGET_COL",
     # data
     "NEIGHBOUR_FILES",
+    "SOURCE_TZ",
     "WIND_FILES",
     "chronological_split",
     "load_data",
@@ -99,6 +112,7 @@ __all__ = [
     "load_wind",
     "make_target",
     "restrict_to_overlap",
+    "restrict_to_years",
     # features
     "FeatureConfig",
     "add_lag_features",
@@ -129,6 +143,9 @@ __all__ = [
     "EvaluationResult",
     "compare",
     "evaluate",
+    # preprocess
+    "Preprocessor",
+    "drop_sparse_columns",
     "mean_impute",
     "scale_features",
     # experiments

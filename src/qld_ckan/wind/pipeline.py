@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .. import unify_frames
+from .. import filter_resource_years, unify_frames
 from .constants import COLUMN_RENAME_MAP, RESOURCE_IDS, STATIONS
 from .downloader import fetch_all
 
@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
-# localising to Australia/Brisbane attaches the correct offset before we
-# convert to UTC for storage. This matches the wave-side convention so the
-# two frames join on a shared UTC index without any timezone fiddling.
+# localising to Australia/Brisbane attaches the correct offset and that is
+# the index downstream code sees. Matches the wave-side convention so the
+# two frames join on a shared AEST index.
 _SOURCE_TZ = "Australia/Brisbane"
 _SAMPLING_FREQ = "1h"
 
@@ -29,7 +29,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
-    """Build a UTC-indexed hourly frame of the wind columns.
+    """Build an AEST-indexed hourly frame of the wind columns.
 
     Combines the separate ``Date`` and ``Time`` fields into one timestamp,
     drops any pollutant / temperature columns the source happens to carry,
@@ -50,15 +50,15 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         dayfirst=True,
         errors="coerce",
     )
-    df = df.assign(datetime_utc=timestamps).dropna(subset=["datetime_utc"])
+    df = df.assign(datetime=timestamps).dropna(subset=["datetime"])
     n_valid_ts = len(df)
 
     # Keep only the renameable wind columns; pollutant / temperature fields
     # are out of scope for this module and their presence varies by year.
     keep = [c for c in COLUMN_RENAME_MAP if c in df.columns]
-    df = df[["datetime_utc", *keep]].rename(columns=COLUMN_RENAME_MAP)
+    df = df[["datetime", *keep]].rename(columns=COLUMN_RENAME_MAP)
 
-    df = df.set_index("datetime_utc").sort_index()
+    df = df.set_index("datetime").sort_index()
     # Year-boundary overlaps occasionally produce duplicate timestamps; keep
     # the first so reindex has a unique axis to align against.
     df = df[~df.index.duplicated(keep="first")]
@@ -68,8 +68,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.apply(pd.to_numeric, errors="coerce")
     full_index = pd.date_range(df.index.min(), df.index.max(), freq=_SAMPLING_FREQ)
     df = df.reindex(full_index)
-    df.index.name = "datetime_utc"
-    df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    df.index.name = "datetime"
+    df.index = df.index.tz_localize(_SOURCE_TZ)
     logger.info(
         "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
         n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,
@@ -81,6 +81,8 @@ def run(
     station: str = "mountain-creek",
     output_path: str | Path | None = None,
     resource_ids: dict[int, str] | None = None,
+    year_min: int | None = None,
+    year_max: int | None = None,
 ) -> pd.DataFrame:
     """Full pipeline: download → clean → save CSV.
 
@@ -91,12 +93,21 @@ def run(
             ``data/{station}_wind_data_{first_year}-{last_year}.csv``.
         resource_ids: explicit year → CKAN resource ID mapping; overrides
             the ``station`` lookup when provided.
+        year_min, year_max: inclusive year bounds applied to the resource-id
+            dict before download. Either bound can be ``None`` to leave that
+            side open. See ``qld_ckan.filter_resource_years``.
 
     Returns:
         The cleaned DataFrame (tz-aware DatetimeIndex, standardised columns).
     """
     if resource_ids is None:
         resource_ids = STATIONS[station]
+    resource_ids = filter_resource_years(resource_ids, year_min, year_max)
+    if not resource_ids:
+        raise ValueError(
+            f"No resources match year_min={year_min}, year_max={year_max} "
+            f"for station={station!r}."
+        )
     if output_path is None:
         years = sorted(resource_ids)
         output_path = _DATA_DIR / f"{station}_wind_data_{years[0]}-{years[-1]}.csv"

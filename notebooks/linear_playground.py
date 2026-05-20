@@ -50,8 +50,8 @@ CONFIG: dict = {
     "year_max":     2024,   # None = data end;   e.g. 2024 to match the wind window
 
     # --- extra sources ---
-    "neighbours":     ["caloundra", "brisbane", "gold-coast", "north-moreton-bay"],     # any subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
-    "wind_stations":  ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
+    "neighbours":     ["caloundra", "brisbane", "gold-coast", "north-moreton-bay", "tweed-heads"],     # any subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay", "palm-beach", "tweed-heads", "wide-bay"
+    "wind_stations":  ["mountain-creek", "deception-bay", "lytton"],  # any subset of: "mountain-creek", "deception-bay", "lytton", "southport"; [] disables wind
 
     # --- feature engineering (FeatureConfig knobs) ---
     # Set to None to use the package defaults.
@@ -157,12 +157,7 @@ def _resolve_hyperparams(cfg_value: bool | dict, defaults: dict) -> dict | None:
 
 
 def _load_wave(buoy: str, year_min: int | None, year_max: int | None) -> pd.DataFrame:
-    df = fc.load_data(buoy=buoy)
-    if year_min is not None:
-        df = df.loc[df.index.year >= year_min]
-    if year_max is not None:
-        df = df.loc[df.index.year <= year_max]
-    return df
+    return fc.restrict_to_years(fc.load_data(buoy=buoy), year_min, year_max)
 
 
 def _build_features(
@@ -280,9 +275,15 @@ def main() -> None:
 
     X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
     X_p_tr, X_p_te, _, _   = fc.chronological_split(X_p, y)
-    X_tr_imp, X_te_imp     = fc.mean_impute(X_tr, X_te)
-    if cfg.get("scaling"):
-        X_tr_imp, X_te_imp = fc.scale_features(X_tr_imp, X_te_imp, method=cfg["scaling"])
+    # One stateful preprocessor: drop → impute → (optional) scale. Fit on
+    # train, transform both. Pickle-able alongside the model for held-out
+    # year scoring (see Preprocessor docstring).
+    preproc = fc.Preprocessor(max_nan_frac=0.5, scaling=cfg.get("scaling") or None).fit(X_tr)
+    X_tr_imp = preproc.transform(X_tr)
+    X_te_imp = preproc.transform(X_te)
+    # Drop list is now visible on the preprocessor for downstream introspection.
+    X_tr = X_tr[preproc.kept_columns_]
+    X_te = X_te[preproc.kept_columns_]
 
     nan_pct = X.isna().mean().mul(100)
     worst = nan_pct.sort_values(ascending=False).head(3).round(2).to_dict()

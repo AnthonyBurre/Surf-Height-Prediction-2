@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .. import unify_frames
+from .. import filter_resource_years, unify_frames
 from .constants import BUOYS, COLUMN_RENAME_MAP, RESOURCE_IDS, SENTINEL_VALUE
 from .downloader import fetch_all
 
@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
-# localising to Australia/Brisbane attaches the correct offset before we
-# convert to UTC for storage. Everything downstream — CSV, modelling, viz —
-# sees UTC; multi-source joins (BOM/GFS reanalysis grids are UTC-native)
-# stay trivial.
+# localising to Australia/Brisbane attaches the correct offset and that is
+# the index downstream code sees. Keeping AEST as the canonical timezone
+# means "year" semantics line up with the source data without per-callsite
+# tz_convert. A future BOM/GFS reanalysis join (UTC-native) can convert at
+# the join site.
 _SOURCE_TZ = "Australia/Brisbane"
 _SAMPLING_FREQ = "30min"
 
@@ -32,7 +33,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """Rename columns, drop rows with invalid timestamps, set a sorted,
-    tz-aware UTC DatetimeIndex on a regular 30-minute grid, coerce measurement
+    tz-aware AEST DatetimeIndex on a regular 30-minute grid, coerce measurement
     columns to numeric, and replace the -99.9 sentinel with NaN.
 
     Gaps in the source data become NaN rows on the reindexed grid so that
@@ -40,9 +41,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     """
     n_raw = len(df)
     df = df.rename(columns=COLUMN_RENAME_MAP)
-    df = df.dropna(subset=["datetime_utc"])
+    df = df.dropna(subset=["datetime"])
     n_valid_ts = len(df)
-    df = df.set_index("datetime_utc")
+    df = df.set_index("datetime")
     df = df.sort_index()
     # Yearly files occasionally overlap at boundaries; drop duplicate
     # timestamps so reindex has a unique axis to align against.
@@ -56,8 +57,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # rather than being silently absent.
     full_index = pd.date_range(df.index.min(), df.index.max(), freq=_SAMPLING_FREQ)
     df = df.reindex(full_index)
-    df.index.name = "datetime_utc"
-    df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    df.index.name = "datetime"
+    df.index = df.index.tz_localize(_SOURCE_TZ)
     logger.info(
         "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
         n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,
@@ -69,6 +70,8 @@ def run(
     buoy: str = "mooloolaba",
     output_path: str | Path | None = None,
     resource_ids: dict[int, str] | None = None,
+    year_min: int | None = None,
+    year_max: int | None = None,
 ) -> pd.DataFrame:
     """Full pipeline: download → clean → save CSV.
 
@@ -79,12 +82,22 @@ def run(
             ``data/{buoy}_wave_data_{first_year}-{last_year}.csv``.
         resource_ids: explicit year → CKAN resource ID mapping; overrides
             the ``buoy`` lookup when provided.
+        year_min, year_max: inclusive year bounds applied to the resource-id
+            dict before download. Either bound can be ``None`` to leave that
+            side open. Bundle resources are filtered by their start-year key;
+            see ``qld_ckan.filter_resource_years``.
 
     Returns:
         The cleaned DataFrame (tz-aware DatetimeIndex, standardised columns).
     """
     if resource_ids is None:
         resource_ids = BUOYS[buoy]
+    resource_ids = filter_resource_years(resource_ids, year_min, year_max)
+    if not resource_ids:
+        raise ValueError(
+            f"No resources match year_min={year_min}, year_max={year_max} "
+            f"for buoy={buoy!r}."
+        )
     if output_path is None:
         years = sorted(resource_ids)
         output_path = _DATA_DIR / f"{buoy}_wave_data_{years[0]}-{years[-1]}.csv"

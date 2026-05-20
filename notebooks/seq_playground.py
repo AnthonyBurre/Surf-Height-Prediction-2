@@ -38,9 +38,10 @@ warnings.filterwarnings("ignore", message="Mean of empty slice")
 CONFIG: dict = {
     # --- data ---
     "primary_buoy":  "mooloolaba",  # any key in qld_ckan.wave.constants.BUOYS; download with `python -m qld_ckan wave --buoy NAME`
+    "year_min":      None,        # None = data start; e.g. 2019 to align with palm-beach + wide-bay availability
     "year_max":      2024,        # cap wave history; 2024 = full wind overlap (both stations)
-    "neighbours":    ["brisbane", "caloundra", "gold-coast", "north-moreton-bay"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay"
-    "wind_stations": ["mountain-creek", "deception-bay"],  # any subset of: "mountain-creek", "deception-bay"; [] disables wind
+    "neighbours":    ["brisbane", "caloundra", "gold-coast", "north-moreton-bay", "tweed-heads"],          # subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay", "palm-beach", "tweed-heads", "wide-bay"
+    "wind_stations": ["mountain-creek", "deception-bay", "lytton"],  # any subset of: "mountain-creek", "deception-bay", "lytton", "southport"; [] disables wind
 
     # --- features ---
     # "raw"        — circular-encoded raw channels + sin/cos time features
@@ -93,9 +94,8 @@ CONFIG: dict = {
 # ---------------------------------------------------------------------------
 
 
-def load_wave(buoy: str, year_max: int) -> pd.DataFrame:
-    df = fc.load_data(buoy=buoy)
-    return df.loc[df.index.year <= year_max]
+def load_wave(buoy: str, year_min: int | None, year_max: int | None) -> pd.DataFrame:
+    return fc.restrict_to_years(fc.load_data(buoy=buoy), year_min, year_max)
 
 
 def build_features(
@@ -150,7 +150,7 @@ def main() -> None:
     device = fc.auto_device(cfg["device"])
     print(f"device         : {device}")
 
-    wave = load_wave(cfg["primary_buoy"], cfg["year_max"])
+    wave = load_wave(cfg["primary_buoy"], cfg.get("year_min"), cfg["year_max"])
     neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
     wind = fc.load_wind(wave.index, cfg["wind_stations"])
 
@@ -179,7 +179,12 @@ def main() -> None:
     worst = nan_pct.sort_values(ascending=False).head(3).round(2).to_dict()
     print(f"top NaN cols   : {worst}\n")
 
-    X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
+    # Sequence models scale internally (see CONFIG["scaler"]); the Preprocessor
+    # handles drop + impute only here. Same fitted object can later be pickled
+    # alongside the model for held-out year scoring.
+    preproc = fc.Preprocessor(max_nan_frac=0.5, scaling=None).fit(X_tr)
+    X_tr_imp = preproc.transform(X_tr)
+    X_te_imp = preproc.transform(X_te)
 
     persist = fc.evaluate(fc.PersistenceForecaster(), X_p_tr, y_tr, X_p_te, y_te)
     pp = persist.predictions
