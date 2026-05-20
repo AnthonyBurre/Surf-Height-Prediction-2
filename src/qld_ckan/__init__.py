@@ -70,6 +70,27 @@ def paginate_records(
     return records
 
 
+def filter_resource_years(
+    resource_ids: dict[int, str],
+    year_min: int | None = None,
+    year_max: int | None = None,
+) -> dict[int, str]:
+    """Return ``resource_ids`` keyed only on years in ``[year_min, year_max]``.
+
+    Bounds are inclusive; either bound can be ``None`` to leave that side open.
+    Filtering is on the dict key, which is the resource's nominal year label —
+    for multi-year bundle resources (e.g. North Moreton Bay's 2010-2015 file
+    keyed as ``2010``), that's the bundle's first year. Callers that want
+    partial-bundle coverage should set ``year_min`` to the bundle's start
+    year rather than a mid-bundle year.
+    """
+    return {
+        y: r for y, r in resource_ids.items()
+        if (year_min is None or y >= year_min)
+        and (year_max is None or y <= year_max)
+    }
+
+
 def fetch_all_years(resource_ids, fetch_one):
     """Apply ``fetch_one(year, rid)`` across a year→rid map, skipping any 404s.
 

@@ -2,8 +2,20 @@
 # even when the portal renames or replaces the underlying file.
 #
 # BUOYS is keyed by short slug; each value maps year → CKAN resource ID.
-# Mooloolaba is the primary forecasting target. Brisbane and North Moreton Bay
-# have full multi-year histories; Caloundra and Gold Coast go back to ~2013/2015.
+# Only resources whose native cadence is the project's 30-minute grid are
+# included — the deep historical bundles for Mooloolaba (2000-2014, 1 h),
+# Brisbane (1976-2011, 12 h), Gold Coast (1987-2014, 6 h), and Tweed Heads
+# (1995-2011, 1 h) are intentionally excluded. The North Moreton Bay
+# 2010-2015 bundle and the Caloundra 2013-2015 bundle are 30 min and stay.
+# Coverage by buoy:
+#   mooloolaba         — 2015-onwards
+#   caloundra          — 2013-onwards (2013-2015 bundle + per-year 2016+)
+#   brisbane           — 2012-onwards (per-year 2012/13/14 + 2015+)
+#   north-moreton-bay  — 2010-onwards (2010-2015 bundle + per-year 2016+)
+#   gold-coast         — 2014-onwards (per-year 2014 + 2015+)
+#   tweed-heads        — 2012-onwards (per-year 2012/13/14 + 2015+)
+#   palm-beach         — 2017-onwards (deployed mid-2017)
+#   wide-bay           — 2019-onwards (deployed 2019)
 BUOYS: dict[str, dict[int, str]] = {
     "mooloolaba": {
         2015: "81df149b-67fc-4e5c-8ab8-b479001e04eb",
@@ -33,9 +45,11 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "d276f08f-5853-493e-a607-0dfa60f6e850",
     },
     "brisbane": {
-        # 2012: "cf594247-4da2-4802-8a86-ea7b514df3e7",
-        # 2013: "5e648c66-e67f-4b76-9ba3-5a281bec7ccf",
-        # 2014: "b328dc90-4f16-4c63-a577-ad954b5e898c",
+        # 2012-2014 are per-year 30-minute files; the 1976-2011 bundle is
+        # 12-hour cadence and is therefore excluded.
+        2012: "cf594247-4da2-4802-8a86-ea7b514df3e7",
+        2013: "5e648c66-e67f-4b76-9ba3-5a281bec7ccf",
+        2014: "b328dc90-4f16-4c63-a577-ad954b5e898c",
         2015: "53cfe709-5b7f-4339-b8c7-919cdcdb79ae",
         2016: "19b441dd-2539-497b-b11c-78a85def64c9",
         2017: "3a833ec3-2685-4999-af4f-f10d304042f6",
@@ -63,6 +77,9 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "95654258-beee-4b4e-b506-e49b6657e5dd",
     },
     "gold-coast": {
+        # 2014 is a per-year 30-minute file; the 1987-2014 historical bundle
+        # is 6-hour cadence and is therefore excluded.
+        2014: "9c1270fd-6626-4ed4-b629-73f687dbb04f",
         2015: "30cdfd68-52e9-4c5c-933c-03c2fed5a11a",
         2016: "c5e598d5-5a9a-45be-9da6-a9f47042e006",
         2017: "f85931b4-926a-49e3-9e56-d65bd49a9f14",
@@ -77,9 +94,12 @@ BUOYS: dict[str, dict[int, str]] = {
         2025: "a8a12129-c99d-45f6-832b-a5cee4754b54",
     },
     "tweed-heads": {
-        # Furthest-south SE QLD buoy; jointly operated with NSW. Full 2011-2026
-        # coverage on CKAN; kept to 2015-2025 here to align with the neighbour
-        # cluster.
+        # Furthest-south SE QLD buoy; jointly operated with NSW. 2012-2014 are
+        # per-year 30-minute files; the 1995-2011 bundle is 1-hour cadence and
+        # is therefore excluded.
+        2012: "4ca6d884-f135-44bb-9c0e-a437fdafd247",
+        2013: "5d269a88-afec-4aeb-88c9-903d924cf30b",
+        2014: "34c769b5-8a14-49f7-ae43-eaba453875f4",
         2015: "0a6087f2-d917-4009-b4d1-1b0b91fa9a87",
         2016: "74341a48-933c-4b64-b496-59dde6ac5e57",
         2017: "8d6b1736-7ae2-484b-bf75-a7ef0564da63",

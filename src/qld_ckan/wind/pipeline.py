@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .. import unify_frames
+from .. import filter_resource_years, unify_frames
 from .constants import COLUMN_RENAME_MAP, RESOURCE_IDS, STATIONS
 from .downloader import fetch_all
 
@@ -81,6 +81,8 @@ def run(
     station: str = "mountain-creek",
     output_path: str | Path | None = None,
     resource_ids: dict[int, str] | None = None,
+    year_min: int | None = None,
+    year_max: int | None = None,
 ) -> pd.DataFrame:
     """Full pipeline: download → clean → save CSV.
 
@@ -91,12 +93,21 @@ def run(
             ``data/{station}_wind_data_{first_year}-{last_year}.csv``.
         resource_ids: explicit year → CKAN resource ID mapping; overrides
             the ``station`` lookup when provided.
+        year_min, year_max: inclusive year bounds applied to the resource-id
+            dict before download. Either bound can be ``None`` to leave that
+            side open. See ``qld_ckan.filter_resource_years``.
 
     Returns:
         The cleaned DataFrame (tz-aware DatetimeIndex, standardised columns).
     """
     if resource_ids is None:
         resource_ids = STATIONS[station]
+    resource_ids = filter_resource_years(resource_ids, year_min, year_max)
+    if not resource_ids:
+        raise ValueError(
+            f"No resources match year_min={year_min}, year_max={year_max} "
+            f"for station={station!r}."
+        )
     if output_path is None:
         years = sorted(resource_ids)
         output_path = _DATA_DIR / f"{station}_wind_data_{years[0]}-{years[-1]}.csv"

@@ -1,4 +1,4 @@
-"""Wave-only EDA across all seven buoys.
+"""Wave-only EDA across all eight buoys.
 
 Run:  ./.venv/bin/python notebooks/wave_eda.py
 

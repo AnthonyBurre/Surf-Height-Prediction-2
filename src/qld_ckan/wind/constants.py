@@ -6,6 +6,14 @@
 # `air-quality-monitoring-{year}` slug.
 STATIONS: dict[str, dict[int, str]] = {
     "mountain-creek": {
+        # 2010-2013 use pre-2015 column-name variants (no `(degTN)` suffix in
+        # 2010; `Wind Sigma Theta (degrees)` instead of `(deg)` in several
+        # years); the rename map below covers both.
+        2010: "8f4d7181-aec9-414e-a7a1-fb01c0c81683",
+        2011: "fa581983-43e3-457a-aef4-4d520438826b",
+        2012: "e9e944fd-ede1-4f3c-8de4-1795c27ad6f7",
+        2013: "0525d413-a20f-434d-a1bb-ef019918e511",
+        2014: "b4d7cd99-bd22-4231-9dd1-a611bdc8b685",
         2015: "9e04a2ef-855d-49e9-b252-a1f46dc576ac",
         2016: "aa9b6fc8-0cd3-4f05-9594-4678d2ba2828",
         2017: "5fafabf3-76d6-4b72-b5c4-cef2aa7f18a6",
@@ -18,6 +26,12 @@ STATIONS: dict[str, dict[int, str]] = {
         2024: "f0199e4f-a10a-4f7a-9fb0-f1eedef674ad",
     },
     "deception-bay": {
+        # Same pre-2015 schema variants as mountain-creek (see rename map).
+        2010: "95e0c7e3-62c2-4dd1-8c79-f6db5e2a0c72",
+        2011: "6d44b732-722a-43c5-bfab-d7a2eee3fe4b",
+        2012: "ef21cd92-eccf-4425-a3c7-6f590bc8327a",
+        2013: "9f26b949-22cd-4f49-9323-f5c692dffaf4",
+        2014: "b476f3f6-8390-483d-a05e-aeadbfecb91a",
         2015: "be0ba961-456e-451d-842d-d62fe7a85ae8",
         2016: "16fc598d-6dae-4c5e-a69b-580f698530aa",
         2017: "96de5878-0df8-4b8b-9153-70eb52152af9",
@@ -42,7 +56,10 @@ STATIONS: dict[str, dict[int, str]] = {
     },
     "lytton": {
         # At the mouth of the Brisbane River, due east of Brisbane CBD; pairs
-        # with the brisbane wave buoy. Full 2015-2024 coverage.
+        # with the brisbane wave buoy. 2014 is the earliest year with data;
+        # that file lacks `Wind Speed Std Dev (m/s)`, so the cleaned frame's
+        # wind_speed_std_ms column is NaN-padded for 2014.
+        2014: "f73ce750-554f-4443-b20f-a15768636a4c",
         2015: "1ad0c355-375b-4a0b-8605-504b2dfb067f",
         2016: "7d26b5d7-6d54-4e52-ae79-0f1590807e06",
         2017: "8f6bc380-1a5f-4fc2-82bf-3615136b532a",
@@ -62,6 +79,9 @@ RESOURCE_IDS: dict[int, str] = STATIONS["mountain-creek"]
 # Wind columns kept after cleaning. Pollutant fields (ozone, NOx, PM10, etc.)
 # and the air-temperature column (which is absent from later years) are dropped
 # at clean time so the unified frame has a stable, wind-focused schema.
+# Pre-2015 column-name variants (``Wind Direction`` without ``(degTN)``,
+# ``Wind Sigma Theta (degrees)``) are normalised to these modern names
+# in the downloader before unify, so this map sees one canonical form.
 COLUMN_RENAME_MAP: dict[str, str] = {
     "Wind Direction (degTN)": "wind_dir_deg",
     "Wind Speed (m/s)": "wind_speed_ms",

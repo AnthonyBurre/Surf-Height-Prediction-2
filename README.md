@@ -35,17 +35,76 @@ The `data/` directory is gitignored — generate it by running the pipeline.
 
 Network calls are mocked, so tests run offline.
 
-## Running the pipeline
+## Data sources
 
-Populate `data/` with these commands:
+All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability. Resource IDs are stable even when the portal renames the underlying file.
+
+Raw records from both sources are naive AEST; `pipeline.clean` localises to Australia/Brisbane (UTC+10, no DST) and that is the canonical project timezone — every unified CSV carries a gap-free `datetime` index in Brisbane time. `df.index.year` therefore returns the source-data year directly. The `forecast.SOURCE_TZ` constant is exported for any downstream code that needs to convert to UTC for a cross-source join (e.g. BOM/GFS reanalysis grids, which are UTC-native).
+
+The CKAN catalogue also hosts multi-year *historical* bundles for several buoys (Mooloolaba 2000-2014, Brisbane 1976-2011, Gold Coast 1987-2014, Tweed Heads 1995-2011). These sample at a non-30-minute cadence (1 h to 12 h, with drifting minute offsets) and are therefore **excluded from the registry** — the project's grid is a strict 30-minute wave / 1-hour wind axis. The two bundles that *are* on the standard grid (North Moreton Bay 2010-2015, Caloundra 2013-2015) are kept and define the earliest available years for those buoys.
+
+### Wave buoy network
+
+30-minute cadence. Mooloolaba is the prediction target; Brisbane, Caloundra, Gold Coast, North Moreton Bay, Palm Beach, Tweed Heads, and Wide Bay feed in as neighbour-buoy features where their histories overlap. Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`.
+
+| Column | Description |
+|--------|-------------|
+| `hsig_m` | Significant wave height (meters) |
+| `hmax_m` | Maximum wave height (meters) |
+| `tz_s` | Zero-crossing period (seconds) |
+| `tp_s` | Peak period (seconds) |
+| `peak_dir_deg` | Peak wave direction (degrees) |
+| `sst_c` | Sea surface temperature (°C) |
+
+### Wind (air-quality monitoring network)
+
+Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek pairs with the Mooloolaba buoy, Deception Bay sits ~50 km south on Moreton Bay, Lytton is at the mouth of the Brisbane River (paired with the Brisbane buoy), and Southport sits on the Gold Coast (paired with the Gold Coast / Palm Beach buoys). Pollutant and temperature fields are dropped at clean time, leaving:
+
+| Column | Description |
+|--------|-------------|
+| `wind_dir_deg` | Wind direction (degrees true north) |
+| `wind_speed_ms` | Wind speed (meters/second) |
+| `wind_sigma_theta_deg` | Wind direction standard deviation (degrees) |
+| `wind_speed_std_ms` | Wind speed standard deviation (meters/second) |
+
+The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
+
+### Running the pipeline
+
+Populate `data/` with these commands (one CSV per source):
 
 ```bash
 # Wave — default Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
-./.venv/bin/python -m qld_ckan wave [--buoy brisbane|caloundra|gold-coast|north-moreton-bay|palm-beach|tweed-heads]
+./.venv/bin/python -m qld_ckan wave [--buoy brisbane|caloundra|gold-coast|north-moreton-bay|palm-beach|tweed-heads|wide-bay]
 
-# Wind — default Mountain Creek 2015-2024 → data/mountain-creek_wind_data_2015-2024.csv
+# Wind — default Mountain Creek 2010-2024 → data/mountain-creek_wind_data_2010-2024.csv
 ./.venv/bin/python -m qld_ckan wind [--station deception-bay|lytton|southport]
 ```
+
+Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the registry before download — handy for a quick experiment on a sub-window without re-fetching the full history. Bounds filter on the resource-id dict's year keys; the output filename reflects the filtered range.
+
+```bash
+# Brisbane buoy, 2018-2020 only → data/brisbane_wave_data_2018-2020.csv
+./.venv/bin/python -m qld_ckan wave --buoy brisbane --year-min 2018 --year-max 2020
+```
+
+### Coverage
+
+The per-source / per-year completeness grids below are produced by `notebooks/wave_eda.py` and `notebooks/wind_eda.py`. Grey cells mean the station wasn't deployed yet; red cells flag partial years (deployment mid-year, sensor outages, the wide-bay 2019-2021 sparsity).
+
+![Wave coverage](notebooks/figures/wave_coverage.png)
+
+![Wind coverage](notebooks/figures/wind_coverage.png)
+
+### Dataset selection: short vs long runtime
+
+The coverage grids define the trade space for any experiment. The choice is a breadth-vs-depth call across two axes — how far back to train, and how many neighbour sources to include:
+
+1. **Long window, narrow set (2010-2024 AEST, Mooloolaba target + 3 neighbours, 2 wind stations).** North Moreton Bay (2010 bundle), plus Mountain Creek + Deception Bay wind cover the full window; Brisbane and Tweed Heads join from 2012, Caloundra from 2013, Gold Coast from 2014. The Mooloolaba target itself starts 2015 — so practically this option is "Mooloolaba 2015-2024 with pre-2015 neighbour context", useful for sequence models whose lookback can stretch back further than the target.
+2. **Standard window, full neighbour set (2015-2024 AEST, 5 buoys + 3 wind stations).** The default for the headline results. Lytton wind starts 2015, so this window is the deepest one where every "always-on" source has data. Mooloolaba + Brisbane / Caloundra / Gold Coast / North Moreton Bay / Tweed Heads neighbours and Mountain Creek / Deception Bay / Lytton wind — 10 years of training, no late-deployment gaps.
+3. **Short window, wide set (2019-2024 AEST, 7 buoys + 4 wind stations).** Palm Beach (deployed 2017), Southport wind (mid-2018), and Wide Bay (2019, the only buoy upstream of northerly swells) only join here. Six years of training in exchange for two extra neighbour buoys and one extra wind station.
+
+Each option assumes the same chronological 80/20 split and the same +12 h horizon. The Results section below runs (2) as the headline and includes a (2)-vs-(3) comparison; (1) is on the table for any experiment that benefits from extra pre-2015 neighbour history without needing a wider source set. Choice of window is a `restrict_to_years(...)` call in the script, not a re-download — every CSV in `data/` already carries its full available range.
 
 ## Modelling
 
@@ -120,9 +179,9 @@ All scripts are plain `.py` files — run directly:
 | `linear_playground.py` | Linear / tree playground (Ridge / Lasso / HGB). One `CONFIG` dict for data window, sources, `FeatureConfig` knobs, HGB residual mode, and an optional nanmean ensemble. |
 | `seq_playground.py` | Sequence-model playground (RNN / GRU / LSTM / TCN). Single `CONFIG` dict for data window, sources, raw-vs-engineered feature mode, model class, and hyperparameters; auto-detects device and logs each run. |
 | `seq_sweep.py` | Small low-epoch hyperparameter sweep over the RNN / GRU / LSTM forecasters, reusing `seq_playground`'s data loading. Logs every run under the `seqsweep` prefix. |
-| `wave_eda.py` | Wave-only EDA across all seven buoys: coverage, distributions, seasonality, direction, autocorrelation, cross-source correlation. Saves seven `wave_*` PNGs to `notebooks/figures/`. |
+| `wave_eda.py` | Wave-only EDA across all eight buoys: coverage, distributions, seasonality, direction, autocorrelation, cross-source correlation. Saves eight `wave_*` PNGs to `notebooks/figures/`. |
 | `lasso_ablation.py` | Per-source Lasso(α=0.001) ablation: trains on Mooloolaba alone, then plus each extra source (and the Gold-Coast + Palm-Beach pair) on the same 2015-2024 split. Prints a README-ready Markdown table. |
-| `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves five `wind_*` PNGs to `notebooks/figures/`. |
+| `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves six `wind_*` PNGs to `notebooks/figures/`. |
 | `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
 
 ## Results
@@ -218,43 +277,6 @@ Scoring a new year against these committed candidates is a re-fit of the same re
 | 2025 | TCN | _TBD_ | _TBD_ |
 | 2025 | Ensemble | _TBD_ | _TBD_ |
 
-## Data source
-
-All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability.
-
-Raw records from both sources are naive AEST; `pipeline.clean` localises to Australia/Brisbane (UTC+10, no DST) and that is the canonical project timezone — every unified CSV carries a gap-free `datetime` index in Brisbane time. `df.index.year` therefore returns the source-data year directly. The `forecast.SOURCE_TZ` constant is exported for any downstream code that needs to convert to UTC for a cross-source join (e.g. BOM/GFS reanalysis grids, which are UTC-native).
-
-**Coverage:** 2015-onward across all sources. Wave runs to 2025; wind runs to 2024, with 2025 to be folded in once QLD publishes it.
-
-### Wave buoy network
-
-30-minute cadence. Mooloolaba is the prediction target; Brisbane, Caloundra, Gold Coast, North Moreton Bay, Palm Beach, and Tweed Heads feed in as neighbour-buoy features where their histories overlap. Palm Beach starts 2017 and the others mostly span 2015-2025; see `notebooks/figures/wave_coverage.png` for the per-buoy/per-year completeness grid.
-
-Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`.
-
-| Column | Description |
-|--------|-------------|
-| `hsig_m` | Significant wave height (meters) |
-| `hmax_m` | Maximum wave height (meters) |
-| `tz_s` | Zero-crossing period (seconds) |
-| `tp_s` | Peak period (seconds) |
-| `peak_dir_deg` | Peak wave direction (degrees) |
-| `sst_c` | Sea surface temperature (°C) |
-
-### Wind (air-quality monitoring network)
-
-Hourly cadence, 10 m ultrasonic wind sensors on the QLD air-quality monitoring stations. Mountain Creek pairs with the Mooloolaba buoy, Deception Bay sits ~50 km south on Moreton Bay, Lytton is at the mouth of the Brisbane River (paired with the Brisbane buoy), and Southport sits on the Gold Coast (paired with the Gold Coast / Palm Beach buoys). Mountain Creek, Deception Bay, and Lytton cover 2015-2024; Southport was deployed mid-2018. Pollutant and temperature fields are dropped at clean time, leaving:
-
-| Column | Description |
-|--------|-------------|
-| `wind_dir_deg` | Wind direction (degrees true north) |
-| `wind_speed_ms` | Wind speed (meters/second) |
-| `wind_sigma_theta_deg` | Wind direction standard deviation (degrees) |
-| `wind_speed_std_ms` | Wind speed standard deviation (meters/second) |
-
-The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
-
-
 ## Project structure
 
 ```
@@ -306,3 +328,5 @@ Surf-Height-Prediction-2/
 4. **Partitioned swell.** Sea vs primary vs secondary swell components, if any QLD or BOM resource exposes them. Bimodal swells will never fit a single `hsig` number.
 
 5. **Mooloolaba tide gauge.** The QLD portal hosts a tide gauge (`mooloolaba-tide-gauge-archived-interval-recordings`) directly at the target buoy location. Schema is trivial — `Date`, `Time`, `Reading` (water level in m) — and tidal range could carry second-order modulation of `hsig_m` that the wave/wind feeds miss. **The catch:** only 2023-2025 are in the CKAN Datastore API (`datastore_active: true`); pre-2023 years are flat CSV/TXT resources that the current `paginate_records` path does not handle. Cleanest split is a new `qld_ckan.tide` sub-package with a flat-resource downloader. Reasonable middle ground: wire tide for 2023-2025 only as a fast experiment, see whether skill moves at all, and only build the older-years ingestion if it does.
+
+6. **Long-cadence historical bundles.** The CKAN catalogue also hosts deeper-history wave bundles for the swell-upstream buoys — Mooloolaba 2000-2014 (1-h cadence), Brisbane 1976-2011 (12-h), Gold Coast 1987-2014 (6-h), Tweed Heads 1995-2011 (1-h). These are intentionally excluded from `qld_ckan.wave.constants.BUOYS` because the project's pipeline assumes a strict 30-minute axis and the bundles' minute offsets drift (e.g. 08:55, 14:56, 20:53). Anyone wanting to use them for low-frequency climatology, storm-event sampling, or a multi-cadence experiment would need a parallel ingestion path: a separate cadence parameter on the wave pipeline, a snap-to-grid (floor + dedup) step before reindex, and a downstream join strategy for marrying coarse historical context with the 30-min modern grid. The CKAN resource IDs are documented in the buoy package pages — `coastal-data-system-waves-{slug}` on `data.qld.gov.au` — and Queensland's brief 1989-1992 DST window inside the older bundles forces the `Australia/Brisbane` localisation to either switch to fixed UTC+10 (`Etc/GMT-10`) or carry per-row DST handling, so that decision is part of the ingestion design too.

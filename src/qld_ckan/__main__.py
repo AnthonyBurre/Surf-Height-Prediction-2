@@ -1,13 +1,24 @@
 """Unified entry point: ``python -m qld_ckan {wave,wind} [...]``.
 
-  python -m qld_ckan wave  --buoy mooloolaba    [--output PATH]
-  python -m qld_ckan wind  --station mountain-creek [--output PATH]
+  python -m qld_ckan wave  --buoy mooloolaba    [--output PATH] [--year-min/--year-max Y]
+  python -m qld_ckan wind  --station mountain-creek [--output PATH] [--year-min/--year-max Y]
 """
 import argparse
 import logging
 
 from .wave.pipeline import run as wave_run
 from .wind.pipeline import run as wind_run
+
+
+def _add_year_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--year-min", type=int, default=None,
+        help="Earliest year to include (inclusive; default: registry minimum).",
+    )
+    p.add_argument(
+        "--year-max", type=int, default=None,
+        help="Latest year to include (inclusive; default: registry maximum).",
+    )
 
 
 def main() -> None:
@@ -27,6 +38,7 @@ def main() -> None:
         "--output", default=None,
         help="Output CSV path (default: data/{buoy}_wave_data_{years}.csv).",
     )
+    _add_year_args(p_wave)
 
     p_wind = sub.add_parser("wind", help="QLD AWS station 10 m wind feed.")
     p_wind.add_argument(
@@ -37,12 +49,19 @@ def main() -> None:
         "--output", default=None,
         help="Output CSV path (default: data/{station}_wind_data_{years}.csv).",
     )
+    _add_year_args(p_wind)
 
     args = parser.parse_args()
     if args.source == "wave":
-        wave_run(buoy=args.buoy, output_path=args.output)
+        wave_run(
+            buoy=args.buoy, output_path=args.output,
+            year_min=args.year_min, year_max=args.year_max,
+        )
     elif args.source == "wind":
-        wind_run(station=args.station, output_path=args.output)
+        wind_run(
+            station=args.station, output_path=args.output,
+            year_min=args.year_min, year_max=args.year_max,
+        )
 
 
 if __name__ == "__main__":

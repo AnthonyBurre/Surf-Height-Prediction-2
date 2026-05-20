@@ -111,20 +111,20 @@ def chronological_split(
 # registry exactly so the same name flows from CLI download → notebook config →
 # experiments.jsonl.
 NEIGHBOUR_FILES: dict[str, str] = {
-    "brisbane":          "brisbane_wave_data_2015-2025.csv",
+    "brisbane":          "brisbane_wave_data_2012-2025.csv",
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "gold-coast":        "gold-coast_wave_data_2015-2025.csv",
+    "gold-coast":        "gold-coast_wave_data_2014-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
-    "tweed-heads":       "tweed-heads_wave_data_2015-2025.csv",
+    "tweed-heads":       "tweed-heads_wave_data_2012-2025.csv",
     "palm-beach":        "palm-beach_wave_data_2017-2025.csv",
     "wide-bay":          "wide-bay_wave_data_2019-2025.csv",
 }
 
 WIND_FILES: dict[str, str] = {
-    "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
-    "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
+    "mountain-creek": "mountain-creek_wind_data_2010-2024.csv",
+    "deception-bay":  "deception-bay_wind_data_2010-2024.csv",
     "southport":      "southport_wind_data_2018-2024.csv",
-    "lytton":         "lytton_wind_data_2015-2024.csv",
+    "lytton":         "lytton_wind_data_2014-2024.csv",
 }
 
 
