@@ -1,8 +1,10 @@
 # Surf Height Prediction 2
 
-Predicts significant wave height (`hsig_m`) 12 hours ahead at the Mooloolaba wave buoy, Australia, using data from the Queensland Government open-data buoy network (2015–2025). Neighbour buoys and nearby wind stations are used as additional input features.
+An exercise in predictive modeling, this project is all about forecasting significant wave height (`hsig_m`) as measured by the Mooloolaba wave buoy off of the sunny coast in Queensland, Australia. All data in this project comes from the Queensland Government open-data api, which provides us with several wind and wave monitoring stations in the region.
 
-Three packages under `src/` carry the work:
+
+
+Three packages under `src/`:
 
 - **`qld_ckan`** — ETL. Downloads yearly records from the QLD CKAN Datastore API, unifies the schema, and writes a cleaned CSV per source. Sub-packages: `qld_ckan.wave` (wave buoys) and `qld_ckan.wind` (air-quality-station 10 m wind). Shared transport (retrying session, paginated GET, 404-skip year loop, `unify_frames`) lives at the umbrella level.
 - **`viz`** — source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-modelling diagnostics.
@@ -18,15 +20,12 @@ At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff ba
 
 ## Setup
 
-Requires Python 3.14 and [uv](https://docs.astral.sh/uv/). Install all dependencies (including the editable local packages and the `forecast` + `viz` extras) into a project-local `.venv` with:
-
+With [uv](https://docs.astral.sh/uv/) installed:
 ```bash
 uv sync --all-extras
 ```
 
-`uv` will fetch Python 3.14 if it isn't already available and pin the full dependency graph in `uv.lock` (committed). To add or upgrade a dep, edit `pyproject.toml` and rerun `uv sync --all-extras`, or use `uv add <pkg>` / `uv lock --upgrade-package <pkg>`.
-
-The `data/` directory is gitignored — populate it by running the pipeline.
+The `data/` directory is gitignored — generate it by running the pipeline.
 
 ### Running tests
 
@@ -242,6 +241,4 @@ Surf-Height-Prediction-2/
 
 3. **Multi-output forecasts.** A 2 m `hsig` from 90° at 14 s breaks very differently from 2 m from 150° at 8 s on the same beach. Forecast `tp_s` and `peak_dir_deg` jointly (`MultiOutputRegressor`, same API as item 2) so downstream code can run a break-specific transform.
 
-4a. **Partitioned swell.** Sea vs primary vs secondary swell components, if any QLD or BOM resource exposes them. Bimodal swells will never fit a single `hsig` number.
-
-4b. **NOAA WAVEWATCH III hindcast.** Free, global, ~25 km grid — the highest-ROI external data add if partitioned swell is unavailable.
+4. **Partitioned swell.** Sea vs primary vs secondary swell components, if any QLD or BOM resource exposes them. Bimodal swells will never fit a single `hsig` number.
