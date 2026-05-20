@@ -33,7 +33,14 @@ def fetch_year_datastore(year: int, resource_id: str) -> pd.DataFrame:
     records = qld_ckan.paginate_records(_session(), resource_id)
     df = pd.DataFrame(records).drop(columns=["_id"], errors="ignore")
     df = _normalize_columns(df, year)
-    df["Date/Time"] = pd.to_datetime(df["Date/Time"], errors="raise")
+    # Date/Time arrives in two flavours across the network: ISO 8601 for
+    # most years, and Australian d/m/Y with mixed leading-zero conventions
+    # (e.g. tweed-heads 2019: "1/01/2019 0:00"). format="mixed", dayfirst=True
+    # handles both without relying on pandas's per-series auto-inference,
+    # which silently swapped to %m/%d/%Y on some short samples.
+    df["Date/Time"] = pd.to_datetime(
+        df["Date/Time"], format="mixed", dayfirst=True, errors="raise"
+    )
     return df
 
 

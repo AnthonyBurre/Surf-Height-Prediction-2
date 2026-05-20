@@ -39,7 +39,7 @@ def test_jsonable(value, expected):
 
 
 def test_jsonable_handles_timestamp():
-    ts = pd.Timestamp("2020-01-01", tz="UTC")
+    ts = pd.Timestamp("2020-01-01", tz="Australia/Brisbane")
     assert _jsonable(ts).startswith("2020-01-01")
 
 

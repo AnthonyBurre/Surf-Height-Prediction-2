@@ -9,12 +9,14 @@ from qld_ckan.wind.pipeline import clean
 # ---------------------------------------------------------------------------
 
 
-def test_clean_combines_date_and_time_into_utc_index(wind_raw_records):
+def test_clean_combines_date_and_time_into_aest_index(wind_raw_records):
     df = clean(pd.DataFrame(wind_raw_records).drop(columns=["_id"]))
-    # 2024-01-01 00:00 Brisbane (UTC+10) is 2023-12-31 14:00 UTC.
-    assert df.index[0] == pd.Timestamp("2023-12-31 14:00", tz="UTC")
-    assert str(df.index.tz) == "UTC"
-    assert df.index.name == "datetime_utc"
+    # Raw input is naive AEST; cleaned index is tagged Australia/Brisbane
+    # so the row reads as 2024-01-01 00:00 AEST (same physical instant as
+    # 2023-12-31 14:00 UTC).
+    assert df.index[0] == pd.Timestamp("2024-01-01 00:00", tz="Australia/Brisbane")
+    assert str(df.index.tz) == "Australia/Brisbane"
+    assert df.index.name == "datetime"
 
 
 def test_clean_renames_wind_columns_and_drops_pollutants(wind_raw_records):
@@ -34,7 +36,7 @@ def test_clean_reindexes_onto_hourly_grid():
         {"Date": "2024-06-01T00:00:00", "Time": "02:00", "Wind Speed (m/s)": 1.5, "Wind Direction (degTN)": 95},
     ]
     df = clean(pd.DataFrame(records))
-    assert len(df) == 3  # 00:00, 01:00, 02:00 (Brisbane)
+    assert len(df) == 3  # 00:00, 01:00, 02:00 AEST
     assert df["wind_speed_ms"].isna().sum() == 1
     assert (df.index[1] - df.index[0]) == pd.Timedelta("1h")
 
@@ -64,8 +66,7 @@ def test_clean_parses_ddmmyyyy_date_format():
         {"Date": "31/03/2019", "Time": "12:00", "Wind Speed (m/s)": 3.0, "Wind Direction (degTN)": 100},
     ]
     df = clean(pd.DataFrame(records))
-    # All three day-first dates must round-trip (not just day ≤ 12). 12:00 AEST
-    # stays on the same calendar day after the UTC shift.
+    # All three day-first dates must round-trip (not just day ≤ 12).
     parsed_days = sorted({ts.day for ts in df.dropna(subset=["wind_speed_ms"]).index})
     assert parsed_days == [1, 15, 31]
 

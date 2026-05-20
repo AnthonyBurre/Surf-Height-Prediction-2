@@ -6,6 +6,8 @@ from forecast import (
     ClimatologyHourForecaster,
     HORIZON_STEPS,
     PersistenceForecaster,
+    Preprocessor,
+    SOURCE_TZ,
     SeasonalNaiveForecaster,
     add_lag_features,
     add_momentum,
@@ -16,11 +18,14 @@ from forecast import (
     build_seq_features,
     chronological_split,
     compare,
+    drop_sparse_columns,
     encode_circular,
     evaluate,
     mae,
     make_target,
+    mean_impute,
     restrict_to_overlap,
+    restrict_to_years,
     rmse,
     scale_features,
     skill_score,
@@ -229,7 +234,7 @@ def test_add_neighbour_features_appends_without_dropping_rows(synthetic_df):
 def test_restrict_to_overlap_clips_to_neighbour_intersection():
     """With no wind, the window is the intersection of neighbour-buoy
     valid ranges."""
-    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="UTC")
+    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="Australia/Brisbane")
     wave = pd.DataFrame({"hsig_m": np.arange(10, dtype=float)}, index=idx)
     # Neighbour A is valid 1..8; Neighbour B is valid 3..7. Intersection: 3..7.
     a = pd.Series([np.nan, *range(1, 9), np.nan], index=idx)
@@ -250,7 +255,7 @@ def test_restrict_to_overlap_wind_window_wins_over_neighbours():
     """When wind is present its valid range defines the window even if it
     is tighter than the neighbour intersection. A regression here would
     silently drop most of the training set."""
-    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="UTC")
+    idx = pd.date_range("2020-01-01", periods=10, freq="30min", tz="Australia/Brisbane")
     wave = pd.DataFrame({"hsig_m": np.arange(10, dtype=float)}, index=idx)
     # Neighbour valid 1..8 — would normally clip to 1..8.
     nb = pd.Series([np.nan, *range(1, 9), np.nan], index=idx)
@@ -279,7 +284,7 @@ def test_persistence_predict_equals_current_target(synthetic_df):
 
 def test_persistence_perfect_on_constant_series():
     """A flat series is exactly forecastable by persistence."""
-    idx = pd.date_range("2020-01-01", periods=100, freq="30min", tz="UTC")
+    idx = pd.date_range("2020-01-01", periods=100, freq="30min", tz="Australia/Brisbane")
     df = pd.DataFrame({"hsig_m": 1.5}, index=idx)
     y = make_target(df, horizon_steps=24)
     preds = PersistenceForecaster().fit(df, y).predict(df)
@@ -305,7 +310,7 @@ def test_seasonal_naive_rejects_period_le_horizon():
 def test_climatology_hour_predicts_training_hourly_mean():
     # Build a series whose hsig_m depends only on hour-of-day.
     n = 48 * 10  # 10 days of 30-min data
-    idx = pd.date_range("2020-01-01", periods=n, freq="30min", tz="UTC")
+    idx = pd.date_range("2020-01-01", periods=n, freq="30min", tz="Australia/Brisbane")
     hsig = idx.hour.to_numpy(dtype=float)  # equals the hour-of-day
     df = pd.DataFrame({"hsig_m": hsig}, index=idx)
     y = make_target(df, horizon_steps=24)  # 12h ahead
@@ -410,8 +415,8 @@ def test_compare_sorts_by_rmse(synthetic_df):
 
 
 def _scale_frames():
-    idx_tr = pd.date_range("2020-01-01", periods=50, freq="30min", name="datetime_utc")
-    idx_te = pd.date_range("2020-02-01", periods=20, freq="30min", name="datetime_utc")
+    idx_tr = pd.date_range("2020-01-01", periods=50, freq="30min", name="datetime")
+    idx_te = pd.date_range("2020-02-01", periods=20, freq="30min", name="datetime")
     cols = ["hsig_m", "tp_s", "peak_dir_deg_sin", "peak_dir_deg_cos"]
     rng = np.random.default_rng(0)
     Xtr = pd.DataFrame(
@@ -468,3 +473,194 @@ def test_scale_features_applies_train_stats_to_test():
     # Test distribution sits well above train -> scaled test stays far from 0.
     assert Ste["hsig_m"].median() > 1.0
     assert Ste["tp_s"].median() > 1.0
+
+
+# ---------------------------------------------------------------------------
+# drop_sparse_columns + mean_impute (standalone helpers)
+# ---------------------------------------------------------------------------
+
+
+def _sparse_frames():
+    """Train: dense_col is 100% valid; sparse_col is 80% NaN. Test mirrors schema."""
+    idx_tr = pd.date_range("2020-01-01", periods=100, freq="30min", name="datetime")
+    idx_te = pd.date_range("2020-03-01", periods=40, freq="30min", name="datetime")
+    rng = np.random.default_rng(0)
+    sparse = np.full(100, np.nan)
+    sparse[:20] = rng.normal(0, 1, 20)  # 80 of 100 missing → above the 0.5 default
+    Xtr = pd.DataFrame({"dense_col": rng.normal(0, 1, 100), "sparse_col": sparse}, index=idx_tr)
+    Xte = pd.DataFrame(
+        {"dense_col": rng.normal(0, 1, 40), "sparse_col": rng.normal(0, 1, 40)},
+        index=idx_te,
+    )
+    return Xtr, Xte
+
+
+def test_drop_sparse_columns_removes_columns_above_threshold(capsys):
+    Xtr, Xte = _sparse_frames()
+    Xtr_d, Xte_d = drop_sparse_columns(Xtr, Xte, max_nan_frac=0.5)
+    assert "sparse_col" not in Xtr_d.columns
+    assert "sparse_col" not in Xte_d.columns
+    assert "dense_col" in Xtr_d.columns
+    # Surface the drop in stdout for notebook runs.
+    out = capsys.readouterr().out
+    assert "sparse_col" in out
+
+
+def test_drop_sparse_columns_returns_inputs_unchanged_when_nothing_drops():
+    Xtr, _ = _scale_frames()  # all four columns are fully populated
+    Xte, _ = _scale_frames()
+    Xtr_d, Xte_d = drop_sparse_columns(Xtr, Xte, max_nan_frac=0.5)
+    pd.testing.assert_frame_equal(Xtr_d, Xtr)
+    pd.testing.assert_frame_equal(Xte_d, Xte)
+
+
+def test_mean_impute_uses_train_means_for_test():
+    Xtr, Xte = _sparse_frames()
+    train_mean = Xtr["sparse_col"].mean()
+    Xtr_imp, Xte_imp = mean_impute(Xtr, Xte)
+    assert not Xtr_imp.isna().any().any()
+    assert not Xte_imp.isna().any().any()
+    # NaN cells in train are filled with the train mean.
+    nan_positions = Xtr["sparse_col"].isna()
+    assert Xtr_imp.loc[nan_positions, "sparse_col"].eq(train_mean).all()
+
+
+# ---------------------------------------------------------------------------
+# Preprocessor — stateful drop / impute / scale bundle
+# ---------------------------------------------------------------------------
+
+
+def test_preprocessor_fit_records_drop_and_kept_columns():
+    Xtr, _ = _sparse_frames()
+    prep = Preprocessor(max_nan_frac=0.5).fit(Xtr)
+    assert prep.dropped_columns_ == ["sparse_col"]
+    assert prep.kept_columns_ == ["dense_col"]
+    assert prep.is_fitted
+
+
+def test_preprocessor_transform_drops_same_columns_at_inference():
+    Xtr, Xte = _sparse_frames()
+    prep = Preprocessor(max_nan_frac=0.5).fit(Xtr)
+    Xte_out = prep.transform(Xte)
+    # Inference-time frame has no NaN in sparse_col, but the column is still
+    # dropped because the *training-time* decision is what governs.
+    assert list(Xte_out.columns) == ["dense_col"]
+
+
+def test_preprocessor_transform_raises_on_missing_kept_column():
+    Xtr, _ = _sparse_frames()
+    prep = Preprocessor(max_nan_frac=0.5).fit(Xtr)
+    # Inference input missing a column the preprocessor was fitted on.
+    X_new = pd.DataFrame({"sparse_col": [1.0]}, index=pd.date_range("2021", periods=1, freq="30min", name="datetime"))
+    with pytest.raises(ValueError, match="missing 1 columns"):
+        prep.transform(X_new)
+
+
+def test_preprocessor_transform_ignores_extra_columns():
+    Xtr, Xte = _sparse_frames()
+    prep = Preprocessor(max_nan_frac=0.5).fit(Xtr)
+    Xte_with_extra = Xte.assign(bonus_col=1.0)  # new column not seen at fit time
+    Xte_out = prep.transform(Xte_with_extra)
+    # Extras are silently dropped (source-set drift is recoverable).
+    assert list(Xte_out.columns) == ["dense_col"]
+
+
+def test_preprocessor_transform_raises_before_fit():
+    prep = Preprocessor()
+    with pytest.raises(RuntimeError, match="not fitted"):
+        prep.transform(pd.DataFrame({"a": [1.0]}))
+
+
+def test_preprocessor_applies_scaler_when_configured():
+    Xtr, _ = _scale_frames()
+    prep = Preprocessor(scaling="robust").fit(Xtr)
+    Xtr_out = prep.transform(Xtr)
+    assert Xtr_out["hsig_m"].median() == pytest.approx(0.0, abs=1e-9)
+    # Circular columns pass through untouched.
+    pd.testing.assert_series_equal(Xtr_out["peak_dir_deg_sin"], Xtr["peak_dir_deg_sin"])
+
+
+def test_preprocessor_save_and_load_round_trips(tmp_path):
+    Xtr, Xte = _sparse_frames()
+    prep = Preprocessor(max_nan_frac=0.5, scaling="robust").fit(Xtr)
+    expected = prep.transform(Xte)
+
+    path = tmp_path / "preproc.pkl"
+    prep.save(path)
+    loaded = Preprocessor.load(path)
+
+    assert loaded.dropped_columns_ == prep.dropped_columns_
+    assert loaded.kept_columns_ == prep.kept_columns_
+    pd.testing.assert_frame_equal(loaded.transform(Xte), expected)
+
+
+def test_preprocessor_rejects_unknown_scaling():
+    with pytest.raises(ValueError, match="scaling must be one of"):
+        Preprocessor(scaling="minmax")  # type: ignore[arg-type]
+
+
+def test_preprocessor_save_before_fit_raises(tmp_path):
+    with pytest.raises(RuntimeError, match="nothing to save"):
+        Preprocessor().save(tmp_path / "x.pkl")
+
+
+# ---------------------------------------------------------------------------
+# data.restrict_to_years (AEST-aware year slice)
+# ---------------------------------------------------------------------------
+
+
+def _aest_frame_around_year_boundary() -> pd.DataFrame:
+    """Six AEST-tagged rows straddling 2024→2025.
+
+    Project convention is AEST-tagged indexes throughout (set by
+    ``qld_ckan.wave.pipeline.clean``), so ``df.index.year`` already returns
+    the AEST year. These rows verify ``restrict_to_years`` slices on the
+    Brisbane boundary as expected — the first two are 2024, the last four
+    are 2025.
+    """
+    idx = pd.DatetimeIndex(
+        [
+            "2024-12-31 23:00",
+            "2024-12-31 23:30",
+            "2025-01-01 00:00",
+            "2025-01-01 00:30",
+            "2025-01-01 01:00",
+            "2025-01-01 01:30",
+        ],
+        tz="Australia/Brisbane",
+        name="datetime",
+    )
+    return pd.DataFrame({"hsig_m": np.arange(6.0)}, index=idx)
+
+
+def test_restrict_to_years_year_max_inclusive():
+    df = _aest_frame_around_year_boundary()
+    kept = restrict_to_years(df, year_min=None, year_max=2024)
+    assert kept["hsig_m"].tolist() == [0.0, 1.0]
+
+
+def test_restrict_to_years_year_min_inclusive():
+    df = _aest_frame_around_year_boundary()
+    kept = restrict_to_years(df, year_min=2025, year_max=None)
+    assert kept["hsig_m"].tolist() == [2.0, 3.0, 4.0, 5.0]
+
+
+def test_restrict_to_years_both_bounds_slice_inclusively():
+    df = _aest_frame_around_year_boundary()
+    assert restrict_to_years(df, 2024, 2024)["hsig_m"].tolist() == [0.0, 1.0]
+    assert restrict_to_years(df, 2025, 2025)["hsig_m"].tolist() == [2.0, 3.0, 4.0, 5.0]
+
+
+def test_restrict_to_years_no_bounds_returns_input_unchanged():
+    df = _aest_frame_around_year_boundary()
+    out = restrict_to_years(df, year_min=None, year_max=None)
+    # Identity-equal — no rebuild when there's nothing to do.
+    assert out is df
+
+
+def test_source_tz_constant_matches_qld_ckan_clean():
+    # The string must match qld_ckan.{wave,wind}.pipeline._SOURCE_TZ —
+    # both refer to the same canonical project timezone. Hard-coded here
+    # so a stray rename in either place would surface a test failure
+    # rather than a silent semantic drift.
+    assert SOURCE_TZ == "Australia/Brisbane"

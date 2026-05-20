@@ -79,10 +79,10 @@ def raw_frame():
 
 
 @pytest.fixture
-def ts_utc():
-    """AEST→UTC tz-aware timestamp matching cleaned-frame index values."""
+def ts_aest():
+    """AEST tz-aware timestamp matching cleaned-frame index values."""
     def _make(s: str) -> pd.Timestamp:
-        return pd.Timestamp(s, tz="Australia/Brisbane").tz_convert("UTC")
+        return pd.Timestamp(s, tz="Australia/Brisbane")
     return _make
 
 
@@ -100,7 +100,7 @@ def synthetic_df():
     """
     def _make(n: int = 200, freq: str = "30min", seed: int = 0) -> pd.DataFrame:
         rng = np.random.default_rng(seed)
-        idx = pd.date_range("2020-01-01", periods=n, freq=freq, tz="UTC")
+        idx = pd.date_range("2020-01-01", periods=n, freq=freq, tz="Australia/Brisbane")
         t = np.arange(n)
         diurnal = 0.5 * np.sin(2 * np.pi * t / 48)  # 24h cycle
         df = pd.DataFrame(
@@ -114,7 +114,7 @@ def synthetic_df():
             },
             index=idx,
         )
-        df.index.name = "datetime_utc"
+        df.index.name = "datetime"
         return df
     return _make
 

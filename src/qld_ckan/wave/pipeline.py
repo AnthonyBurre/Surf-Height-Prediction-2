@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
-# localising to Australia/Brisbane attaches the correct offset before we
-# convert to UTC for storage. Everything downstream — CSV, modelling, viz —
-# sees UTC; multi-source joins (BOM/GFS reanalysis grids are UTC-native)
-# stay trivial.
+# localising to Australia/Brisbane attaches the correct offset and that is
+# the index downstream code sees. Keeping AEST as the canonical timezone
+# means "year" semantics line up with the source data without per-callsite
+# tz_convert. A future BOM/GFS reanalysis join (UTC-native) can convert at
+# the join site.
 _SOURCE_TZ = "Australia/Brisbane"
 _SAMPLING_FREQ = "30min"
 
@@ -32,7 +33,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """Rename columns, drop rows with invalid timestamps, set a sorted,
-    tz-aware UTC DatetimeIndex on a regular 30-minute grid, coerce measurement
+    tz-aware AEST DatetimeIndex on a regular 30-minute grid, coerce measurement
     columns to numeric, and replace the -99.9 sentinel with NaN.
 
     Gaps in the source data become NaN rows on the reindexed grid so that
@@ -40,9 +41,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     """
     n_raw = len(df)
     df = df.rename(columns=COLUMN_RENAME_MAP)
-    df = df.dropna(subset=["datetime_utc"])
+    df = df.dropna(subset=["datetime"])
     n_valid_ts = len(df)
-    df = df.set_index("datetime_utc")
+    df = df.set_index("datetime")
     df = df.sort_index()
     # Yearly files occasionally overlap at boundaries; drop duplicate
     # timestamps so reindex has a unique axis to align against.
@@ -56,8 +57,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # rather than being silently absent.
     full_index = pd.date_range(df.index.min(), df.index.max(), freq=_SAMPLING_FREQ)
     df = df.reindex(full_index)
-    df.index.name = "datetime_utc"
-    df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    df.index.name = "datetime"
+    df.index = df.index.tz_localize(_SOURCE_TZ)
     logger.info(
         "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
         n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,

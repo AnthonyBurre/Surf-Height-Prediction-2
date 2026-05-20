@@ -14,19 +14,26 @@ from .features import encode_circular
 # scripts both find the file without path juggling.
 _DATA_DIR = Path(__file__).parents[2] / "data"
 
+# Source observations are naive AEST (Queensland is fixed UTC+10, no DST).
+# pipeline.clean tags every CSV index with Australia/Brisbane, so the index is
+# AEST end-to-end and ``df.index.year`` naturally returns the source-data
+# year. SOURCE_TZ is exported for downstream consumers that need to assert
+# the convention (or convert to another tz for a join).
+SOURCE_TZ = "Australia/Brisbane"
+
 
 def load_data(
     buoy: str = "mooloolaba",
     path: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Load a unified wave buoy CSV with a tz-aware UTC DatetimeIndex.
+    """Load a unified wave buoy CSV with a tz-aware AEST DatetimeIndex.
 
     With no ``path``: globs ``data/{buoy}_wave_data_*.csv`` and picks the
     longest-range match (lexicographic last → e.g. ``..._2015-2025.csv``
     beats ``..._2015-2024.csv``). Pass ``path`` for a specific file.
 
-    The pipeline writes UTC offsets, which ``read_csv(parse_dates=...)``
-    parses straight back to a tz-aware UTC index — no relocalise needed.
+    The pipeline writes Brisbane (UTC+10) offsets, which ``read_csv`` parses
+    straight back to a tz-aware index — no relocalise needed.
     """
     if path is None:
         matches = sorted(_DATA_DIR.glob(f"{buoy}_wave_data_*.csv"))
@@ -36,7 +43,30 @@ def load_data(
                 f"Run `python -m qld_ckan wave --buoy {buoy}` to generate it."
             )
         path = matches[-1]
-    return pd.read_csv(path, parse_dates=["datetime_utc"], index_col="datetime_utc")
+    return pd.read_csv(path, parse_dates=["datetime"], index_col="datetime")
+
+
+def restrict_to_years(
+    df: pd.DataFrame,
+    year_min: int | None,
+    year_max: int | None,
+) -> pd.DataFrame:
+    """Slice ``df`` to AEST years in ``[year_min, year_max]`` (inclusive on both ends).
+
+    Returns ``df`` unchanged when both bounds are ``None``. The frame is
+    expected to carry an AEST-tagged index (the project-wide convention
+    set by ``qld_ckan.{wave,wind}.pipeline.clean``); ``df.index.year``
+    therefore reads the source-data year directly.
+    """
+    if year_min is None and year_max is None:
+        return df
+    yr = df.index.year
+    mask = pd.Series(True, index=df.index)
+    if year_min is not None:
+        mask &= yr >= year_min
+    if year_max is not None:
+        mask &= yr <= year_max
+    return df.loc[mask]
 
 
 def make_target(
@@ -85,11 +115,16 @@ NEIGHBOUR_FILES: dict[str, str] = {
     "caloundra":         "caloundra_wave_data_2013-2025.csv",
     "gold-coast":        "gold-coast_wave_data_2015-2025.csv",
     "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
+    "tweed-heads":       "tweed-heads_wave_data_2015-2025.csv",
+    "palm-beach":        "palm-beach_wave_data_2017-2025.csv",
+    "wide-bay":          "wide-bay_wave_data_2019-2025.csv",
 }
 
 WIND_FILES: dict[str, str] = {
     "mountain-creek": "mountain-creek_wind_data_2015-2024.csv",
     "deception-bay":  "deception-bay_wind_data_2015-2024.csv",
+    "southport":      "southport_wind_data_2018-2024.csv",
+    "lytton":         "lytton_wind_data_2015-2024.csv",
 }
 
 
@@ -106,7 +141,7 @@ def load_neighbours(
             )
         nb = pd.read_csv(
             _DATA_DIR / NEIGHBOUR_FILES[name],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
+            parse_dates=["datetime"], index_col="datetime",
         )
         out[name] = nb["hsig_m"].reindex(target_index)
     return out
@@ -134,7 +169,7 @@ def load_wind(
             )
         w = pd.read_csv(
             _DATA_DIR / WIND_FILES[s],
-            parse_dates=["datetime_utc"], index_col="datetime_utc",
+            parse_dates=["datetime"], index_col="datetime",
         )
         w = encode_circular(w, periods={"wind_dir_deg": 360.0})
         w = w.add_prefix(f"{s}_")

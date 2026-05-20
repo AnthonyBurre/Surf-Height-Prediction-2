@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).parents[3] / "data"
 
 # Source timestamps are naive AEST (Queensland is fixed UTC+10, no DST), so
-# localising to Australia/Brisbane attaches the correct offset before we
-# convert to UTC for storage. This matches the wave-side convention so the
-# two frames join on a shared UTC index without any timezone fiddling.
+# localising to Australia/Brisbane attaches the correct offset and that is
+# the index downstream code sees. Matches the wave-side convention so the
+# two frames join on a shared AEST index.
 _SOURCE_TZ = "Australia/Brisbane"
 _SAMPLING_FREQ = "1h"
 
@@ -29,7 +29,7 @@ def unify(resource_ids: dict[int, str] | None = None) -> pd.DataFrame:
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
-    """Build a UTC-indexed hourly frame of the wind columns.
+    """Build an AEST-indexed hourly frame of the wind columns.
 
     Combines the separate ``Date`` and ``Time`` fields into one timestamp,
     drops any pollutant / temperature columns the source happens to carry,
@@ -50,15 +50,15 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         dayfirst=True,
         errors="coerce",
     )
-    df = df.assign(datetime_utc=timestamps).dropna(subset=["datetime_utc"])
+    df = df.assign(datetime=timestamps).dropna(subset=["datetime"])
     n_valid_ts = len(df)
 
     # Keep only the renameable wind columns; pollutant / temperature fields
     # are out of scope for this module and their presence varies by year.
     keep = [c for c in COLUMN_RENAME_MAP if c in df.columns]
-    df = df[["datetime_utc", *keep]].rename(columns=COLUMN_RENAME_MAP)
+    df = df[["datetime", *keep]].rename(columns=COLUMN_RENAME_MAP)
 
-    df = df.set_index("datetime_utc").sort_index()
+    df = df.set_index("datetime").sort_index()
     # Year-boundary overlaps occasionally produce duplicate timestamps; keep
     # the first so reindex has a unique axis to align against.
     df = df[~df.index.duplicated(keep="first")]
@@ -68,8 +68,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.apply(pd.to_numeric, errors="coerce")
     full_index = pd.date_range(df.index.min(), df.index.max(), freq=_SAMPLING_FREQ)
     df = df.reindex(full_index)
-    df.index.name = "datetime_utc"
-    df.index = df.index.tz_localize(_SOURCE_TZ).tz_convert("UTC")
+    df.index.name = "datetime"
+    df.index = df.index.tz_localize(_SOURCE_TZ)
     logger.info(
         "clean: raw=%d → valid_ts=%d → unique=%d → grid=%d (NaN-padded=%d)",
         n_raw, n_valid_ts, n_unique, len(df), len(df) - n_unique,

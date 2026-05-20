@@ -76,6 +76,46 @@ BUOYS: dict[str, dict[int, str]] = {
         2024: "67c8cf49-cb29-4cd1-86ff-d61bfdb8cbba",
         2025: "a8a12129-c99d-45f6-832b-a5cee4754b54",
     },
+    "tweed-heads": {
+        # Furthest-south SE QLD buoy; jointly operated with NSW. Full 2011-2026
+        # coverage on CKAN; kept to 2015-2025 here to align with the neighbour
+        # cluster.
+        2015: "0a6087f2-d917-4009-b4d1-1b0b91fa9a87",
+        2016: "74341a48-933c-4b64-b496-59dde6ac5e57",
+        2017: "8d6b1736-7ae2-484b-bf75-a7ef0564da63",
+        2018: "34860155-b168-4b81-b48f-dc362b9807bd",
+        2019: "7caf54dd-356e-4d9d-862d-f0fd86cad69e",
+        2020: "25bf55cc-4c7b-4ca6-9f07-e2f197314b02",
+        2021: "68005deb-5f79-4808-bc16-3b5378eda85a",
+        2022: "14eb287f-8084-42a9-a4e0-035db5ff283b",
+        2023: "45968dc5-40f4-46e0-9c8f-915947f879b3",
+        2024: "7f6c61b7-5a19-48c9-a609-1d1bed8b73fe",
+        2025: "bc667055-aa5c-4449-ba26-3953e99ccf67",
+    },
+    "palm-beach": {
+        # Inshore Gold Coast site ~25 km south of the gold-coast buoy; deployed
+        # 2017, so 2015-2016 are unavailable.
+        2017: "4da6606f-cd31-4e55-8e28-058e86e5d8c4",
+        2018: "8b238223-0936-4e67-985f-f747f0b8933c",
+        2019: "fd2898c4-cbf1-490f-a417-524cd1aa966c",
+        2020: "f9428896-ed80-4a7c-a94c-f8ba1e305cae",
+        2021: "524a0e1d-8a05-4d04-abfd-6d45f29538ad",
+        2022: "8351f685-066f-4a75-80f6-cbd71decd3e9",
+        2023: "c5df48a2-9c02-46c9-bfe3-d4df4b5d7375",
+        2024: "e290a20a-7a2c-4004-bbb7-a379ff12bb02",
+        2025: "6fa75109-b4b5-4360-a3e4-ed6dfd80efc3",
+    },
+    "wide-bay": {
+        # Northern buoy ~120 km north of Mooloolaba; the only buoy upstream of
+        # northerly swells. Deployed 2019, so 2015-2018 are unavailable.
+        2019: "ac458084-beb6-4845-92e5-06b35bce32c4",
+        2020: "7880277a-abe1-46f7-b157-06b95d5bcbcf",
+        2021: "a6d74800-9c8a-4d0e-826b-b139d0d8bfe5",
+        2022: "1ce31773-1031-4deb-81ac-70f7d3f23111",
+        2023: "1bf8a850-dd59-441b-b0dd-11acec002227",
+        2024: "327b3beb-ed49-44eb-9146-7c335962f17c",
+        2025: "ae855051-21d5-4913-9797-04645fd7abf6",
+    },
 }
 
 # Backwards-compatible alias for the primary Mooloolaba buoy.
@@ -86,7 +126,7 @@ SENTINEL_VALUE = -99.9
 
 # Final standardised column names applied after per-year normalisation
 COLUMN_RENAME_MAP: dict[str, str] = {
-    "Date/Time": "datetime_utc",
+    "Date/Time": "datetime",
     "Hs": "hsig_m",
     "Hmax": "hmax_m",
     "Tz": "tz_s",

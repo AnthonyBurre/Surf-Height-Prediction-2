@@ -41,7 +41,7 @@ def load_wind(station: str) -> pd.DataFrame:
             f"No wind CSV for station={station!r} in {DATA_DIR}. "
             f"Run `python -m qld_ckan wind --station {station}` to generate it."
         )
-    return pd.read_csv(matches[-1], parse_dates=["datetime_utc"], index_col="datetime_utc")
+    return pd.read_csv(matches[-1], parse_dates=["datetime"], index_col="datetime")
 
 
 def aligned_hourly(wave: pd.DataFrame, winds: dict[str, pd.DataFrame]) -> pd.DataFrame:
