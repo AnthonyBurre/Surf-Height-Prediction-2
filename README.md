@@ -5,16 +5,15 @@ An exercise in predictive modeling, this project is all about forecasting signif
 
 ## Objective
 
-Given buoy observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h* — 24 steps ahead. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now").
+Given observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h*. 
 
-At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff baseline.
+At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff baseline. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now"). 
 
+## Data Source
 
-## Data sources
+All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability.
 
-All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability. Resource IDs are stable even when the portal renames the underlying file.
-
-Raw records from both sources are naive AEST; `pipeline.clean` localises to Australia/Brisbane (UTC+10, no DST) and that is the canonical project timezone — every unified CSV carries a gap-free `datetime` index in Brisbane time. `df.index.year` therefore returns the source-data year directly. The `forecast.SOURCE_TZ` constant is exported for any downstream code that needs to convert to UTC for a cross-source join (e.g. BOM/GFS reanalysis grids, which are UTC-native).
+Thankfully with raw AEST records we don't have to worry about time changes, so `pipeline.clean` can simply localize the naive AEST records to Australia/Brisbane and every unified CSV carries a gap-free `datetime` index in Brisbane time. `df.index.year` therefore returns the source-data year directly. The `forecast.SOURCE_TZ` constant is exported for any downstream code that needs to convert to UTC for a cross-source join.
 
 The CKAN catalogue also hosts multi-year *historical* bundles for several buoys, but not at 30 minute intervals.[^1]
 
@@ -163,8 +162,6 @@ Every added source helps, but not equally:
 - **Gold Coast + Palm Beach together** lifts skill ~0.4 points over Gold Coast alone — they're partially redundant (the buoys are ~25 km apart) but Lasso keeps coefficients on both, so the two-source pair beats either alone. The current architecture handles this without any merging logic: each source's columns are prefixed, NaN-imputed, and offered to the model side by side.
 - **Wind** with all four stations (now including Lytton and Southport) reaches +15.4%, up from +14.2% with the original two stations — the additional coverage at the Brisbane river mouth and Gold Coast helps modestly.
 
-The ablation is single-source-vs-baseline, not cumulative; the full-source playground runs in the Results table above stack everything and outperform every row here.
-
 ## Real World Performance
 
 Each new year is scored as a true blind set against three pre-committed models - best linear, best neural, best ensemble. The QLD wind 2025 release is the current blocker on the first row.
@@ -215,20 +212,18 @@ Experiment scripts in `notebooks/` run on top of these packages.
 Generate `data/` with these commands (one CSV per source):
 
 ```bash
-# Wave — default Mooloolaba 2015-2025 → data/mooloolaba_wave_data_2015-2025.csv
+# Wave - default Mooloolaba 2015-2025
 ./.venv/bin/python -m qld_ckan wave [--buoy brisbane|caloundra|gold-coast|north-moreton-bay|palm-beach|tweed-heads|wide-bay]
 
-# Wind — default Mountain Creek 2010-2024 → data/mountain-creek_wind_data_2010-2024.csv
+# Wind - default Mountain Creek 2010-2024
 ./.venv/bin/python -m qld_ckan wind [--station deception-bay|lytton|southport]
 ```
 
 Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the registry before download.
 
 ```bash
-# Brisbane buoy, 2018-2020 only → data/brisbane_wave_data_2018-2020.csv
 ./.venv/bin/python -m qld_ckan wave --buoy brisbane --year-min 2018 --year-max 2020
 ```
-
 
 `forecast` exposes a flat import surface (`import forecast as fc`): target construction (`make_target` shifts `hsig_m` 24 steps ahead), chronological 80/20 split, feature builders, and an `evaluate_and_log` harness that scores `MAE / RMSE / Bias / SkillVsBaseline` against persistence and appends to `experiments.jsonl`. A typical call:
 
@@ -237,7 +232,7 @@ result = fc.evaluate_and_log(
     fc.Ridge(alpha=1.0), X_tr, y_tr, X_te, y_te,
     name="ridge", data_sources=["mooloolaba"],
 )
-print(result.metrics)  # {"MAE": ..., "RMSE": ..., "Bias": ..., "SkillVsBaseline": ...}
+print(result.metrics)
 ```
 
 ### Available forecasters
