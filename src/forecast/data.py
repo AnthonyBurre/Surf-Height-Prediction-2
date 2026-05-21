@@ -105,44 +105,26 @@ def chronological_split(
     return X.iloc[:split], X.iloc[split:], y.iloc[:split], y.iloc[split:]
 
 
-# Filename registries for the multi-source playgrounds. Keys are the slugs the
-# CONFIG dicts pass through; values are the CSVs ``python -m qld_ckan wave`` /
-# ``python -m qld_ckan wind`` produce. Slugs match the qld_ckan BUOYS / STATIONS
-# registry exactly so the same name flows from CLI download → notebook config →
-# experiments.jsonl.
-NEIGHBOUR_FILES: dict[str, str] = {
-    "brisbane":          "brisbane_wave_data_2012-2025.csv",
-    "caloundra":         "caloundra_wave_data_2013-2025.csv",
-    "gold-coast":        "gold-coast_wave_data_2014-2025.csv",
-    "north-moreton-bay": "north-moreton-bay_wave_data_2010-2025.csv",
-    "tweed-heads":       "tweed-heads_wave_data_2012-2025.csv",
-    "palm-beach":        "palm-beach_wave_data_2017-2025.csv",
-    "wide-bay":          "wide-bay_wave_data_2019-2025.csv",
-}
-
-WIND_FILES: dict[str, str] = {
-    "mountain-creek": "mountain-creek_wind_data_2010-2024.csv",
-    "deception-bay":  "deception-bay_wind_data_2010-2024.csv",
-    "southport":      "southport_wind_data_2018-2024.csv",
-    "lytton":         "lytton_wind_data_2014-2024.csv",
-}
-
-
 def load_neighbours(
     target_index: pd.DatetimeIndex,
     neighbours: list[str],
 ) -> dict[str, pd.Series]:
-    """Load each neighbour's hsig_m series, reindexed onto ``target_index``."""
+    """Load each neighbour's hsig_m series, reindexed onto ``target_index``.
+
+    For each slug, globs ``data/{slug}_wave_data_*.csv`` and picks the
+    longest-range match (lexicographic last → e.g. ``..._2015-2025.csv``
+    beats ``..._2015-2024.csv``), matching ``load_data``'s convention.
+    Raises ``FileNotFoundError`` if no CSV exists for a requested slug.
+    """
     out: dict[str, pd.Series] = {}
     for name in neighbours:
-        if name not in NEIGHBOUR_FILES:
-            raise ValueError(
-                f"Unknown neighbour {name!r}; supported: {list(NEIGHBOUR_FILES)}"
+        matches = sorted(_DATA_DIR.glob(f"{name}_wave_data_*.csv"))
+        if not matches:
+            raise FileNotFoundError(
+                f"No wave CSV found for neighbour={name!r} in {_DATA_DIR}. "
+                f"Run `python -m qld_ckan wave --buoy {name}` to generate it."
             )
-        nb = pd.read_csv(
-            _DATA_DIR / NEIGHBOUR_FILES[name],
-            parse_dates=["datetime"], index_col="datetime",
-        )
+        nb = pd.read_csv(matches[-1], parse_dates=["datetime"], index_col="datetime")
         out[name] = nb["hsig_m"].reindex(target_index)
     return out
 
@@ -158,19 +140,22 @@ def load_wind(
     loads keep them distinct. The wind grid is hourly while ``target_index``
     is typically 30-min: each 30-min slot inherits the most recent past
     hourly reading via forward-fill, which is strictly past-only.
+
+    For each slug, globs ``data/{slug}_wind_data_*.csv`` and picks the
+    longest-range match (lexicographic last). Raises ``FileNotFoundError``
+    if no CSV exists for a requested slug.
     """
     if not stations:
         return None
     frames: list[pd.DataFrame] = []
     for s in stations:
-        if s not in WIND_FILES:
-            raise ValueError(
-                f"Unknown wind station {s!r}; supported: {list(WIND_FILES)}"
+        matches = sorted(_DATA_DIR.glob(f"{s}_wind_data_*.csv"))
+        if not matches:
+            raise FileNotFoundError(
+                f"No wind CSV found for station={s!r} in {_DATA_DIR}. "
+                f"Run `python -m qld_ckan wind --station {s}` to generate it."
             )
-        w = pd.read_csv(
-            _DATA_DIR / WIND_FILES[s],
-            parse_dates=["datetime"], index_col="datetime",
-        )
+        w = pd.read_csv(matches[-1], parse_dates=["datetime"], index_col="datetime")
         w = encode_circular(w, periods={"wind_dir_deg": 360.0})
         w = w.add_prefix(f"{s}_")
         frames.append(w.reindex(target_index, method="ffill"))
