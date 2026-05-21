@@ -9,7 +9,7 @@ Given observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 
 
 At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff baseline. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now"). 
 
-## Data Source
+## Data sources
 
 All data comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), fetched via the CKAN Datastore API (`datastore_search`) rather than raw CSV downloads for stability.
 
@@ -47,14 +47,14 @@ The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
 ![Wind coverage](notebooks/figures/wind_coverage.png)
 
-### Dataset selection: short vs long runtime
+### Dataset selection: length vs breadth
 
 The coverage grids define the trade space for any experiment. The choice is a breadth-vs-depth call across two axes — how far back to train, and how many neighbour sources to include:
 
 1. **Standard window, full neighbour set (2015-2024 AEST, 5 buoys + 3 wind stations).** The default for the headline results. Lytton wind starts 2015, so this window is the deepest one where every "always-on" source has data. Mooloolaba + Brisbane / Caloundra / Gold Coast / North Moreton Bay / Tweed Heads neighbours and Mountain Creek / Deception Bay / Lytton wind — 10 years of training, no late-deployment gaps.
 2. **Short window, wide set (2019-2024 AEST, 7 buoys + 4 wind stations).** Palm Beach (deployed 2017), Southport wind (mid-2018), and Wide Bay (2019, the only buoy upstream of northerly swells) only join here. Six years of training in exchange for two extra neighbour buoys and one extra wind station.
 
-## Data Prep
+## Data preparation
 
 ### Feature engineering
 
@@ -68,9 +68,9 @@ The feature matrix is assembled in three layers, each a single call:
 
 `forecast.preprocess.Preprocessor` bundles the three steps the playgrounds run between `chronological_split` and `model.fit`:
 
-1. **Drop sparse columns** — any column whose **train-set** NaN fraction exceeds `max_nan_frac` (default 0.5) is removed. Mean-imputing a 90%-NaN column gives a near-constant feature that silently corrodes gradient-based sequence models: every window contains the imputed value, the gradient is dominated by it, but it carries no real signal (e.g. Lytton's `wind_speed_std_ms`). The `wave_column_coverage.png` and `wind_column_coverage.png` EDA figures surface candidates ahead of time.
+1. **Drop sparse columns** — any column whose **train-set** NaN fraction exceeds `max_nan_frac` (default 0.5) is removed. Mean-imputing a near-empty column gives a near-constant feature that silently corrodes gradient-based sequence models (see the dropped-column note under Results for a concrete TCN example). The `wave_column_coverage.png` and `wind_column_coverage.png` EDA figures surface candidates ahead of time.
 2. **Mean impute** — column-wise mean from training data fills remaining NaNs.
-3. **Scale** (optional) — `"robust"` (median/IQR, default for linear models) or `"standard"`; `*_sin`/`*_cos` columns pass through untouched. Sequence models scale internally, so they skip this step (`scaling=None`). Linear models train on `RobustScaler` (median/IQR) by default — wave data is heavy-tailed, so storm spikes would inflate a standard-deviation scale. Circular `*_sin`/`*_cos` columns pass through untouched. Tree models (HGB) take the raw matrix. Sequence models scale internally (`scaler="robust"` or `"standard"`, fit on train) and take the unscaled `build_seq_features` frame.
+3. **Scale** (optional) — `"robust"` (median/IQR) or `"standard"`. Linear models default to robust because wave data is heavy-tailed and storm spikes would inflate a standard-deviation scale. Trees (HGB) take the raw matrix. Sequence models scale internally (`scaler="robust"` or `"standard"`, fit on train) and consume the unscaled `build_seq_features` frame. `*_sin`/`*_cos` columns pass through untouched in all cases.
 
 The standalone helpers (`fc.drop_sparse_columns`, `fc.mean_impute`, `fc.scale_features`) still exist for one-shot use, but the playgrounds use the class so the fitted state can be inspected, asserted, and pickled:
 
@@ -89,9 +89,9 @@ X_2025_p = preproc.transform(X_2025)  # raises if any fit-time column is missing
 `transform()` enforces the schema the preprocessor was fitted on: any missing required column raises `ValueError`; extra columns (e.g. a new wind station appearing later) are silently dropped. This catches the failure mode where a held-out year's feature matrix doesn't line up with the training-time decisions — without the class, that mismatch would surface as a silently wrong prediction.
 
 
-## Model Selection and Tuning
+## Model selection and tuning
 
-All runs use a chronological 80/20 split on the **2015-2024 AEST** window (Brisbane time = UTC+10, no DST) — the span where the full-coverage wind stations have data. Skill score is vs. persistence on the same test split. The default source set is **5 neighbour buoys** (Brisbane, Caloundra, Gold Coast, North Moreton Bay, Tweed Heads) and **3 wind stations** (Mountain Creek, Deception Bay, Lytton); Palm Beach (2017-onwards) and Southport (mid-2018-onwards) are held out for the wider-set / shorter-window comparison below. The table below is a curated cross-section; find the full set of logged runs in `experiments.jsonl`.
+All runs use a chronological 80/20 split on the **standard window** (2015-2024 AEST, 5 neighbour buoys + 3 wind stations — see *Dataset selection* above). Brisbane time is UTC+10 year-round, no DST. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; find the full set of logged runs in `experiments.jsonl`.
 
 | Model | Data sources | RMSE (cm) | Skill |
 |-------|-------------|------|-------|
@@ -107,17 +107,17 @@ All runs use a chronological 80/20 split on the **2015-2024 AEST** window (Brisb
 
 **Notes:**
 
-- **Best single model:** Ridge and TCN tie on RMSE. **Best overall:** nanmean ensemble of Ridge + Lasso + HGB (same family as previous best, ~0.4 skill points above the previous published 26.6%).
+- **Best single model:** Ridge and TCN tie on RMSE. **Best overall:** nanmean ensemble of Ridge + Lasso + HGB.
 - The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the 8-source feature set (5 neighbour buoys + 3 wind stations, ~315 features), with linear models on robust-scaled features (`fc.scale_features`).
 - The sequence rows use the same best per-class configs from `notebooks/seq_sweep.py` that previously won on the smaller (4 nb + 2 wind) feature set. **TCN and GRU survive the larger input space; RNN and LSTM regress and want re-tuning** (e.g. wider hidden, more epochs) — a fresh sweep would close that gap.
 - All runs go through a `fc.drop_sparse_columns(max_nan_frac=0.5)` step before imputation. This removed Lytton's `wind_speed_std_ms` (87.9 % NaN train-set) and its 12 lag/rolling derivatives — that column is essentially absent from the station's feed, and mean-imputation would silently turn it into a near-constant feature that confuses gradient-based seq models (TCN went from −1.7 % skill to +24.1 % skill once the dead channel was dropped).
-- **Robust vs standard scaler** (in-forecaster, sequence models): robust helped the simpler recurrent nets — RNN +2.7, GRU +2.6 skill points — but was a wash for LSTM and TCN. Wave data's heavy tail favours a robust scale, but only where the model isn't already absorbing it.
+- **Robust vs standard scaler** (in-forecaster, sequence models): robust helped the simpler recurrent nets — RNN +2.7, GRU +2.6 skill points — but was a wash for LSTM and TCN. The heavy-tail benefit only shows up where the model isn't already absorbing it.
 - **Adam `weight_decay`** (1e-4 for the gated cells, 1e-5 for the vanilla RNN) enabled an extra training epoch without overfit (tuned on the smaller feature set; revisit alongside any seq sweep).
 - Inter-layer `rnn_dropout` was tested but never beat the L=1 winners.
 
-### Phase B: wider source set on a shorter window (2019-2024)
+### Wider source set on a shorter window (2019-2024)
 
-The default Results table holds the source set to what's available across the full 2015-2024 AEST span. The 2019-2024 AEST window unlocks three more sources — Palm Beach (deployed 2017), Southport wind (deployed mid-2018), and Wide Bay buoy (deployed 2019, the only buoy upstream of northerly swells). Same chronological 80/20 split as everywhere else; persistence baseline on this shorter window is 28.3 cm (vs 26.5 cm on the full window) because the recent years have more storm volatility.
+Switching to the wide-set window (see *Dataset selection*) unlocks Palm Beach, Southport wind, and Wide Bay. Same chronological 80/20 split; persistence baseline is 28.3 cm vs 26.5 cm on the standard window because the recent years have more storm volatility.
 
 | Model | Narrow (5nb + 3w) RMSE / Skill | Wide (7nb + 4w) RMSE / Skill | Δ skill |
 |-------|--------------------------------|------------------------------|---------|
@@ -134,8 +134,8 @@ The default Results table holds the source set to what's available across the fu
 Reading:
 
 - **Adding Palm Beach + Southport + Wide Bay buys ~0.5 skill points for linear models and essentially nothing for the ensemble** — the wider source set is not a step change. The Gold Coast / Brisbane / Mooloolaba buoys already cover most of the explainable variance for a +12h forecast at this site.
-- **Sequence models regress further with the wider set**, repeating the Phase A pattern: their published-best hyperparameters were tuned for the smaller feature matrix and don't generalise to ~38 input channels (38 vs 31 narrow vs 22 in the originally-published 4nb+2w runs). A fresh `seq_sweep.py` run on the wide set would close the gap.
-- **Persistence is harder to beat on 2019-2024 by absolute RMSE but easier by skill** — the recent window is noisier, so everything has higher RMSE, but the persistence baseline is also higher, so the *gap* widens. The ~+28.7 % ensemble skill on Phase B looks better than +27.0 % on the headline table but reflects a different — and harder — test distribution.
+- **Sequence models regress further with the wider set**, repeating the headline-table pattern: their published-best hyperparameters were tuned for the smaller feature matrix and don't generalise to ~38 input channels (38 vs 31 narrow vs 22 in the originally-published 4nb+2w runs). A fresh `seq_sweep.py` run on the wide set would close the gap.
+- **Persistence is harder to beat on 2019-2024 by absolute RMSE but easier by skill** — the recent window is noisier, so everything has higher RMSE, but the persistence baseline is also higher, so the *gap* widens. The ~+28.7 % ensemble skill on the wide-set window looks better than +27.0 % on the headline table but reflects a different — and harder — test distribution.
 - **Wide Bay's per-year coverage is uneven on this window** (33% in 2019, 32% in 2021, 61% in 2024 — see `notebooks/figures/wave_coverage.png`). It survives because mean-imputation fills the gaps with the buoy's mean, but the row-level sparsity is what limits the wider-set gain.
 
 ### Lasso: incremental value of each data source
@@ -160,11 +160,11 @@ Every added source helps, but not equally:
 - **Palm Beach** adds ~5 skill points alone — a meaningful gain, lower than Gold Coast (its near-neighbour) but well above Caloundra/NMB.
 - **Tweed Heads** barely moves the needle on its own, despite a full 2015-2025 history. The zero-lag correlation with Mooloolaba is only ~0.65 (vs ~0.79 for Gold Coast and ~0.91 for Caloundra), so the southernmost buoy genuinely sits in a different swell context.
 - **Gold Coast + Palm Beach together** lifts skill ~0.4 points over Gold Coast alone — they're partially redundant (the buoys are ~25 km apart) but Lasso keeps coefficients on both, so the two-source pair beats either alone. The current architecture handles this without any merging logic: each source's columns are prefixed, NaN-imputed, and offered to the model side by side.
-- **Wind** with all four stations (now including Lytton and Southport) reaches +15.4%, up from +14.2% with the original two stations — the additional coverage at the Brisbane river mouth and Gold Coast helps modestly.
+- **Wind** with all four stations (now including Lytton and Southport) reaches +15.3%, up from +14.2% with the original two stations — the additional coverage at the Brisbane river mouth and Gold Coast helps modestly.
 
-## Real World Performance
+## Real world performance
 
-Each new year is scored as a true blind set against three pre-committed models - best linear, best neural, best ensemble. The QLD wind 2025 release is the current blocker on the first row.
+Each new year that passes can be scored as a true blind set against our best models. This way we evaluate them against brand new data that wasn't implicitly leaked through the train/test iterative process. Awaiting the QLD wind 2025 release expected September 2026.
 
 **Pre-committed candidates for 2025**, all trained on 2015-2024 with Mooloolaba + 5 neighbours + 3 wind stations:
 
@@ -172,7 +172,7 @@ Each new year is scored as a true blind set against three pre-committed models -
 - **Neural** — TCN (seq_len=48, channels=(64,), 1 block, 2 epochs)
 - **Ensemble** — NanMean of Ridge + Lasso + HGB
 
-Scoring a new year against these committed candidates is a re-fit of the same recipe on the same training data, not a load of a serialised model. The `Preprocessor` fitted alongside each model captures the drop list, imputer means, and scaler stats, so the held-out year sees the same transformation the model was trained against — including any schema drift (extra columns are dropped, missing required columns raise). If you want to freeze the artifact instead of the recipe, `preproc.save(...)` + `pickle.dump(model, ...)` pair cleanly.
+Scoring a new year against these committed candidates is a re-fit of the same recipe on the same training data, not a load of a serialised model. The `Preprocessor` fitted alongside each model captures the drop list, imputer means, and scaler stats, so the held-out year sees the same transformation the model was trained against — including any schema drift (extra columns are dropped, missing required columns raise).
 
 | Year | Model | RMSE (cm) | Skill |
 |------|-------|-----------|-------|
@@ -203,7 +203,7 @@ Run tests after changes:
     - `qld_ckan.wave` (wave buoys) 
     - `qld_ckan.wind` (air-quality-station 10 m wind)
 - **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-modelling diagnostics.
-- **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, an evaluation harness, and PyTorch sequence forecasters (RNN / GRU / LSTM / TCN).
+- **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, and an evaluation harness. See *Available forecasters* below for the model list.
 
 Experiment scripts in `notebooks/` run on top of these packages.
 
@@ -267,7 +267,7 @@ All scripts are plain `.py` files — run directly:
 
 
 
-## Future Expansions
+## Future directions
 
 1. **Predict quantiles, not just the mean.** Quantile HGB (`HistGradientBoostingRegressor(loss="quantile", quantile=q)`) for P10/P50/P90 is a ~10-line addition; conformalised intervals over Ridge are similar. Also the structural fix for the confirmed tail underfit — residuals-vs-predicted plots show bias concentrated at high wave heights, a fat-tailed-residual-meets-MSE problem that a target transform can't fix. A quantile/pinball loss stops the model hedging the tail.
 
@@ -275,10 +275,8 @@ All scripts are plain `.py` files — run directly:
 
 3. **Multi-output forecasts.** A 2 m `hsig` from 90° at 14 s breaks very differently from 2 m from 150° at 8 s on the same beach. Forecast `tp_s` and `peak_dir_deg` jointly (`MultiOutputRegressor`, same API as item 2) so downstream code can run a break-specific transform.
 
-4. **Partitioned swell.** Sea vs primary vs secondary swell components, if any QLD or BOM resource exposes them. Bimodal swells will never fit a single `hsig` number.
-
-5. **Mooloolaba tide gauge.** The QLD portal hosts a tide gauge (`mooloolaba-tide-gauge-archived-interval-recordings`) directly at the target buoy location. Schema is trivial — `Date`, `Time`, `Reading` (water level in m) — and tidal range could carry second-order modulation of `hsig_m` that the wave/wind feeds miss. **The catch:** only 2023-2025 are in the CKAN Datastore API (`datastore_active: true`); pre-2023 years are flat CSV/TXT resources that the current `paginate_records` path does not handle. Cleanest split is a new `qld_ckan.tide` sub-package with a flat-resource downloader. Reasonable middle ground: wire tide for 2023-2025 only as a fast experiment, see whether skill moves at all, and only build the older-years ingestion if it does.
+4. **Mooloolaba tide gauge.** The QLD portal hosts a tide gauge (`mooloolaba-tide-gauge-archived-interval-recordings`) directly at the target buoy location. Schema is trivial — `Date`, `Time`, `Reading` (water level in m) — and tidal range could carry second-order modulation of `hsig_m` that the wave/wind feeds miss. **The catch:** only 2023-2025 are in the CKAN Datastore API (`datastore_active: true`); pre-2023 years are flat CSV/TXT resources that the current `paginate_records` path does not handle. Cleanest split is a new `qld_ckan.tide` sub-package with a flat-resource downloader. Reasonable middle ground: wire tide for 2023-2025 only as a fast experiment, see whether skill moves at all, and only build the older-years ingestion if it does.
 
 6. **Long-cadence historical bundles.** The CKAN catalogue also hosts deeper-history wave bundles for the swell-upstream buoys — Mooloolaba 2000-2014 (1-h cadence), Brisbane 1976-2011 (12-h), Gold Coast 1987-2014 (6-h), Tweed Heads 1995-2011 (1-h). These are intentionally excluded from `qld_ckan.wave.constants.BUOYS` because the project's pipeline assumes a strict 30-minute axis and the bundles' minute offsets drift (e.g. 08:55, 14:56, 20:53). Anyone wanting to use them for low-frequency climatology, storm-event sampling, or a multi-cadence experiment would need a parallel ingestion path: a separate cadence parameter on the wave pipeline, a snap-to-grid (floor + dedup) step before reindex, and a downstream join strategy for marrying coarse historical context with the 30-min modern grid. The CKAN resource IDs are documented in the buoy package pages — `coastal-data-system-waves-{slug}` on `data.qld.gov.au` — and Queensland's brief 1989-1992 DST window inside the older bundles forces the `Australia/Brisbane` localisation to either switch to fixed UTC+10 (`Etc/GMT-10`) or carry per-row DST handling, so that decision is part of the ingestion design too.
 
-[^1] (Mooloolaba 2000-2014, Brisbane 1976-2011, Gold Coast 1987-2014, Tweed Heads 1995-2011). These sample at a non-30-minute cadence (1 h to 12 h, with drifting minute offsets) and are therefore **excluded from the registry** — the project's grid is a strict 30-minute wave / 1-hour wind axis. The two bundles that *are* on the standard grid (North Moreton Bay 2010-2015, Caloundra 2013-2015) are kept and define the earliest available years for those buoys.
+[^1]: The off-grid bundles (1 h to 12 h cadence, drifting minute offsets) are excluded — see Future work #6 for the list and ingestion strategy. The two bundles that *are* on the standard 30-min grid (North Moreton Bay 2010-2015, Caloundra 2013-2015) are kept and define the earliest available years for those buoys.
