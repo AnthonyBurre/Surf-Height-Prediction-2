@@ -29,10 +29,10 @@ from forecast.data import load_data
 FIG_DIR = Path(__file__).parent / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
-BUOYS = ["mooloolaba", "caloundra", "brisbane", "gold-coast", "north-moreton-bay",
-         "palm-beach", "tweed-heads", "wide-bay"]
-NEIGHBOURS = ["caloundra", "brisbane", "gold-coast", "north-moreton-bay",
-              "palm-beach", "tweed-heads", "wide-bay"]
+BUOYS = ["wide-bay", "mooloolaba", "caloundra", "north-moreton-bay", "brisbane", "gold-coast",
+         "palm-beach", "tweed-heads"]
+NEIGHBOURS = ["wide-bay", "caloundra", "north-moreton-bay", "brisbane", "gold-coast",
+              "palm-beach", "tweed-heads"]
 
 COLORS: dict[str, str] = {
     "mooloolaba":        "#1f77b4",

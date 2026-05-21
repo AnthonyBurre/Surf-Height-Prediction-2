@@ -16,7 +16,7 @@ All data comes from the [Queensland Government open data portal](https://www.dat
 
 Raw records from both sources are naive AEST; `pipeline.clean` localises to Australia/Brisbane (UTC+10, no DST) and that is the canonical project timezone — every unified CSV carries a gap-free `datetime` index in Brisbane time. `df.index.year` therefore returns the source-data year directly. The `forecast.SOURCE_TZ` constant is exported for any downstream code that needs to convert to UTC for a cross-source join (e.g. BOM/GFS reanalysis grids, which are UTC-native).
 
-The CKAN catalogue also hosts multi-year *historical* bundles for several buoys (Mooloolaba 2000-2014, Brisbane 1976-2011, Gold Coast 1987-2014, Tweed Heads 1995-2011). These sample at a non-30-minute cadence (1 h to 12 h, with drifting minute offsets) and are therefore **excluded from the registry** — the project's grid is a strict 30-minute wave / 1-hour wind axis. The two bundles that *are* on the standard grid (North Moreton Bay 2010-2015, Caloundra 2013-2015) are kept and define the earliest available years for those buoys.
+The CKAN catalogue also hosts multi-year *historical* bundles for several buoys, but not at 30 minute intervals.[^1]
 
 ### Wave buoy network
 
@@ -65,17 +65,13 @@ The feature matrix is assembled in three layers, each a single call:
 2. **Neighbour buoys** (`fc.add_neighbour_features`) — raw value, lag copies, and rolling mean/std per neighbour column, reusing the same `FeatureConfig`.
 3. **Wind stations** — same `add_neighbour_features` call on each wind station's columns. `fc.load_wind` sin/cos-encodes `wind_dir_deg` and station-prefixes every column so cross-station features stay distinguishable.
 
-### Feature scaling
-
-Linear models train on `RobustScaler` (median/IQR) by default — wave data is heavy-tailed, so storm spikes would inflate a standard-deviation scale. Circular `*_sin`/`*_cos` columns pass through untouched. Tree models (HGB) take the raw matrix. Sequence models scale internally (`scaler="robust"` or `"standard"`, fit on train) and take the unscaled `build_seq_features` frame.
-
 ### Preprocessing pipeline
 
 `forecast.preprocess.Preprocessor` bundles the three steps the playgrounds run between `chronological_split` and `model.fit`:
 
 1. **Drop sparse columns** — any column whose **train-set** NaN fraction exceeds `max_nan_frac` (default 0.5) is removed. Mean-imputing a 90%-NaN column gives a near-constant feature that silently corrodes gradient-based sequence models: every window contains the imputed value, the gradient is dominated by it, but it carries no real signal (e.g. Lytton's `wind_speed_std_ms`). The `wave_column_coverage.png` and `wind_column_coverage.png` EDA figures surface candidates ahead of time.
 2. **Mean impute** — column-wise mean from training data fills remaining NaNs.
-3. **Scale** (optional) — `"robust"` (median/IQR, default for linear models) or `"standard"`; `*_sin`/`*_cos` columns pass through untouched. Sequence models scale internally, so they skip this step (`scaling=None`).
+3. **Scale** (optional) — `"robust"` (median/IQR, default for linear models) or `"standard"`; `*_sin`/`*_cos` columns pass through untouched. Sequence models scale internally, so they skip this step (`scaling=None`). Linear models train on `RobustScaler` (median/IQR) by default — wave data is heavy-tailed, so storm spikes would inflate a standard-deviation scale. Circular `*_sin`/`*_cos` columns pass through untouched. Tree models (HGB) take the raw matrix. Sequence models scale internally (`scaler="robust"` or `"standard"`, fit on train) and take the unscaled `build_seq_features` frame.
 
 The standalone helpers (`fc.drop_sparse_columns`, `fc.mean_impute`, `fc.scale_features`) still exist for one-shot use, but the playgrounds use the class so the fitted state can be inspected, asserted, and pickled:
 
@@ -198,13 +194,11 @@ With [uv](https://docs.astral.sh/uv/) installed:
 uv sync --all-extras
 ```
 
-#### Running tests
+Run tests after changes:
 
 ```bash
 ./.venv/bin/pytest src/tests/ -v
 ```
-
-Network calls are mocked, so tests run offline.
 
 ### Packages
 
@@ -272,9 +266,9 @@ All scripts are plain `.py` files — run directly:
 | `seq_playground.py` | Sequence-model playground (RNN / GRU / LSTM / TCN). Single `CONFIG` dict for data window, sources, raw-vs-engineered feature mode, model class, and hyperparameters; auto-detects device and logs each run. |
 | `seq_sweep.py` | Small low-epoch hyperparameter sweep over the RNN / GRU / LSTM forecasters, reusing `seq_playground`'s data loading. Logs every run under the `seqsweep` prefix. |
 | `wave_eda.py` | Wave-only EDA across all eight buoys: coverage, distributions, seasonality, direction, autocorrelation, cross-source correlation. Saves eight `wave_*` PNGs to `notebooks/figures/`. |
-| `lasso_ablation.py` | Per-source Lasso(α=0.001) ablation: trains on Mooloolaba alone, then plus each extra source (and the Gold-Coast + Palm-Beach pair) on the same 2015-2024 split. Prints a README-ready Markdown table. |
 | `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves six `wind_*` PNGs to `notebooks/figures/`. |
 | `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
+| `lasso_ablation.py` | Per-source Lasso(α=0.001) ablation: trains on Mooloolaba alone, then plus each extra source (and the Gold-Coast + Palm-Beach pair) on the same 2015-2024 split. Prints a README-ready Markdown table. |
 
 
 
@@ -291,3 +285,5 @@ All scripts are plain `.py` files — run directly:
 5. **Mooloolaba tide gauge.** The QLD portal hosts a tide gauge (`mooloolaba-tide-gauge-archived-interval-recordings`) directly at the target buoy location. Schema is trivial — `Date`, `Time`, `Reading` (water level in m) — and tidal range could carry second-order modulation of `hsig_m` that the wave/wind feeds miss. **The catch:** only 2023-2025 are in the CKAN Datastore API (`datastore_active: true`); pre-2023 years are flat CSV/TXT resources that the current `paginate_records` path does not handle. Cleanest split is a new `qld_ckan.tide` sub-package with a flat-resource downloader. Reasonable middle ground: wire tide for 2023-2025 only as a fast experiment, see whether skill moves at all, and only build the older-years ingestion if it does.
 
 6. **Long-cadence historical bundles.** The CKAN catalogue also hosts deeper-history wave bundles for the swell-upstream buoys — Mooloolaba 2000-2014 (1-h cadence), Brisbane 1976-2011 (12-h), Gold Coast 1987-2014 (6-h), Tweed Heads 1995-2011 (1-h). These are intentionally excluded from `qld_ckan.wave.constants.BUOYS` because the project's pipeline assumes a strict 30-minute axis and the bundles' minute offsets drift (e.g. 08:55, 14:56, 20:53). Anyone wanting to use them for low-frequency climatology, storm-event sampling, or a multi-cadence experiment would need a parallel ingestion path: a separate cadence parameter on the wave pipeline, a snap-to-grid (floor + dedup) step before reindex, and a downstream join strategy for marrying coarse historical context with the 30-min modern grid. The CKAN resource IDs are documented in the buoy package pages — `coastal-data-system-waves-{slug}` on `data.qld.gov.au` — and Queensland's brief 1989-1992 DST window inside the older bundles forces the `Australia/Brisbane` localisation to either switch to fixed UTC+10 (`Etc/GMT-10`) or carry per-row DST handling, so that decision is part of the ingestion design too.
+
+[^1] (Mooloolaba 2000-2014, Brisbane 1976-2011, Gold Coast 1987-2014, Tweed Heads 1995-2011). These sample at a non-30-minute cadence (1 h to 12 h, with drifting minute offsets) and are therefore **excluded from the registry** — the project's grid is a strict 30-minute wave / 1-hour wind axis. The two bundles that *are* on the standard grid (North Moreton Bay 2010-2015, Caloundra 2013-2015) are kept and define the earliest available years for those buoys.
