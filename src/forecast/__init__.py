@@ -32,9 +32,7 @@ from .config import (
     TARGET_COL,
 )
 from .data import (
-    NEIGHBOUR_FILES,
     SOURCE_TZ,
-    WIND_FILES,
     chronological_split,
     load_data,
     load_neighbours,
@@ -103,9 +101,7 @@ __all__ = [
     "SAMPLING_FREQ_MINUTES",
     "TARGET_COL",
     # data
-    "NEIGHBOUR_FILES",
     "SOURCE_TZ",
-    "WIND_FILES",
     "chronological_split",
     "load_data",
     "load_neighbours",
