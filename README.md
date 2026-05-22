@@ -103,94 +103,17 @@ X_2025_p = preproc.transform(X_2025)  # raises if any fit-time column is missing
 
 ## Model selection and tuning
 
-All runs use a chronological 80/20 split on the **standard window** (2015-2024 AEST, 5 neighbour buoys + 3 wind stations — see *Dataset selection* above). Brisbane time is UTC+10 year-round, no DST. Skill score is vs. persistence on the same test split. The table below is a curated cross-section; find the full set of logged runs in `experiments.jsonl`.
-
-| Model | Data sources | RMSE (cm) | Skill |
-|-------|-------------|------|-------|
-| Persistence (baseline) | Mooloolaba | 26.5 | — |
-| LSTM (seq_len=48, hidden=64, 1 layer, 3 epochs, weight_decay=1e-4) | Mooloolaba + 5 neighbours + wind | 24.9 | +12.4% |
-| RNN (seq_len=48, hidden=128, 2 layers, 3 epochs, weight_decay=1e-5) | Mooloolaba + 5 neighbours + wind | 23.9 | +18.8% |
-| HGB (persistence-residual target) | Mooloolaba + 5 neighbours + wind | 23.4 | +22.6% |
-| GRU (seq_len=48, hidden=64, 1 layer, 3 epochs, weight_decay=1e-4) | Mooloolaba + 5 neighbours + wind | 23.2 | +23.6% |
-| TCN (seq_len=48, channels=(64,), 1 block, 2 epochs) | Mooloolaba + 5 neighbours + wind | 23.1 | +24.1% |
-| Lasso (alpha=0.001) | Mooloolaba + 5 neighbours + wind | 23.1 | +24.1% |
-| Ridge (alpha=1.0) | Mooloolaba + 5 neighbours + wind | 23.1 | +24.3% |
-| **NanMean ensemble (Ridge + Lasso + HGB)** | Mooloolaba + 5 neighbours + wind | **22.7** | **+27.0%** |
-
-**Notes:**
-
-- **Best single model:** Ridge and TCN tie on RMSE. **Best overall:** nanmean ensemble of Ridge + Lasso + HGB.
-- The linear/tree rows are the best runs of `notebooks/linear_playground.py` on the 8-source feature set (5 neighbour buoys + 3 wind stations, ~315 features), with linear models on robust-scaled features (`fc.scale_features`).
-- The sequence rows use the same best per-class configs from `notebooks/seq_sweep.py` that previously won on the smaller (4 nb + 2 wind) feature set. **TCN and GRU survive the larger input space; RNN and LSTM regress and want re-tuning** (e.g. wider hidden, more epochs) — a fresh sweep would close that gap.
-- All runs go through a `fc.drop_sparse_columns(max_nan_frac=0.5)` step before imputation. This removed Lytton's `wind_speed_std_ms` (87.9 % NaN train-set) and its 12 lag/rolling derivatives — that column is essentially absent from the station's feed, and mean-imputation would silently turn it into a near-constant feature that confuses gradient-based seq models (TCN went from −1.7 % skill to +24.1 % skill once the dead channel was dropped).
-- **Robust vs standard scaler** (in-forecaster, sequence models): robust helped the simpler recurrent nets — RNN +2.7, GRU +2.6 skill points — but was a wash for LSTM and TCN. The heavy-tail benefit only shows up where the model isn't already absorbing it.
-- **Adam `weight_decay`** (1e-4 for the gated cells, 1e-5 for the vanilla RNN) enabled an extra training epoch without overfit (tuned on the smaller feature set; revisit alongside any seq sweep).
-- Inter-layer `rnn_dropout` was tested but never beat the L=1 winners.
-
-### Wider source set, shorter training history (2019-2024)
-
-Switching to the wide-set window (see *Dataset selection*) unlocks Palm Beach, Southport wind, and Wide Bay. Both feature sets are scored on the **same test slice** — narrow's natural 80/20 split timestamp (2023-01-01 09:30 → 2024-12-31 23:30, n=35,069) is reused as the wide-set cutoff via `seq_sweep.py` and the `test_start` knob in `linear_playground.py`, so the only differences between rows are feature set (5nb+3w vs 7nb+4w) and training-history depth (140k rows from 2015 vs 70k from 2019). Sequence-model hyperparameters were re-tuned per set (44 wide configs, 41 narrow); linear/HGB/ensemble rows are the best `linear_playground.py` runs.
-
-| Model | Narrow (5nb + 3w) RMSE / Skill | Wide (7nb + 4w) RMSE / Skill | Δ skill |
-|-------|--------------------------------|------------------------------|---------|
-| Persistence | 39.96 cm / — | 39.96 cm / — | — |
-| TCN | 38.58 / +6.9% | 37.67 / +11.3% | +4.4 |
-| LSTM | 37.45 / +12.3% | 38.08 / +9.4% | −2.9 |
-| Lasso | 35.15 / +22.7% | 34.82 / +24.2% | +1.5 |
-| GRU | 34.96 / +23.6% | 35.11 / +23.0% | −0.6 |
-| Ridge | 34.84 / +24.0% | 34.89 / +23.8% | −0.2 |
-| HGB | 34.73 / +24.5% | 35.60 / +20.7% | −3.8 |
-| RNN | 34.57 / +25.3% | 35.28 / +22.2% | −3.1 |
-| **NanMean ensemble (Ridge + Lasso + HGB)** | **34.42 / +25.9%** | **34.40 / +26.0%** | **+0.1** |
-
-Best wide configs from the sweep: RNN `sl48 h256 L2 ep3 wd=1e-4 do=0.1`, GRU `sl48 h64 L1 ep2`, LSTM `sl48 h128 L2 ep3 wd=1e-4 do=0.1`, TCN `sl48 channels=(128,)×4 ep3 wd=1e-4 do=0.2`. Best narrow: RNN `sl48 h128 L2 ep3 wd=1e-4`, GRU `sl48 h64 L1 ep2`, LSTM `sl48 h128 L1 ep3 wd=1e-4`, TCN `sl48 channels=(64,) ep2 do=0.1`.
-
-Reading:
-
-- **The wider source set is essentially a wash on a fair window.** The ensemble is dead-flat (+0.1 skill points), Ridge / GRU / Lasso move by ≤1.5 points, and the modest gains (Lasso, TCN) and losses (HGB, RNN) roughly cancel. Mooloolaba + Gold Coast + Brisbane already capture most of the explainable +12h variance at this site; Palm Beach + Southport + Wide Bay don't add much that survives regularisation or ensembling.
-- **TCN is the lone material winner on wide** (+4.4 skill points). A deeper stack (4 blocks at 128 channels) finally finds a config that exploits the wider input — though TCN still trails the linear winners by ~14 skill points and isn't competitive yet on this task.
-- **HGB and RNN regress ~3 skill points on wide.** Both lose more from halving the training history (8y → 4y) than they gain from the extra sources. HGB drops from top-2 single model on narrow to mid-pack on wide.
-- **The best single seq model on each set is now within striking distance of the ensemble** — narrow RNN +25.3 vs ensemble +25.9; wide GRU +23.0 vs ensemble +26.0. The previous headline note that RNN/LSTM "want re-tuning" was right; the broadened-grid sweep absorbs most of the gap.
-- **LSTM trails the family on both sets** (+12% / +9%) — same hidden / layers / epoch envelope as RNN/GRU, but the gated recurrence isn't earning its parameters here.
-- **Wide Bay's per-year coverage is uneven on this window** (33% in 2019, 32% in 2021, 61% in 2024 — see `notebooks/figures/wave_coverage.png`). It survives because mean-imputation fills the gaps with the buoy's mean, but the row-level sparsity remains a known cap on the wider-set gain.
-
-Bottom line: at parity on the same test window, **the narrow set is the better deployment choice** — same headline skill, twice the training data, fewer late-deployment coverage gaps.
-
-### Lasso: incremental value of each data source
-
-To check that the extra sources actually carry signal, here is a plain `Lasso(alpha=0.001)` trained on the Mooloolaba buoy alone, then on Mooloolaba plus each extra source *in isolation* (not cumulative). The Gold-Coast-plus-Palm-Beach row is the one cumulative entry, since the two are close enough that an independent-vs-pair comparison is the question of interest. "Non-zero coefs" is how many of the feature columns Lasso kept, and "Top feature" is the largest `|coef|`. Reproduce with `./.venv/bin/python notebooks/lasso_ablation.py`.
-
-| Data sources | RMSE (cm) | Skill | Non-zero coefs | Top feature |
-|--------------|-----------|-------|----------------|-------------|
-| Mooloolaba only | 35.7 | +20.5% | 47 / 107 | `hsig_m` |
-| + Caloundra | 35.6 | +20.7% | 55 / 120 | `hsig_m` |
-| + Brisbane | 35.3 | +21.8% | 57 / 120 | `hsig_m` |
-| + Gold Coast | 35.3 | +22.1% | 56 / 120 | `hsig_m` |
-| + North Moreton Bay | 35.6 | +20.7% | 54 / 120 | `hsig_m` |
-| + Tweed Heads | 35.4 | +21.8% | 53 / 120 | `hsig_m` |
-| + Palm Beach | 36.3 | +20.8% | 53 / 120 | `hsig_m` |
-| + Gold Coast + Palm Beach | 36.1 | +21.4% | 61 / 133 | `hsig_m` |
-| + wind (4 stations) | 35.4 | +21.5% | 113 / 302 | `hsig_m` |
-
-The picture is more compressed than it used to be — every extra source moves skill by under 2 points, and a few don't move it at all:
-
-- **Brisbane and Gold Coast** (the southern, swell-upstream buoys) are still the strongest standalone additions, worth ~1.3-1.6 skill points each. Unlike before, neither displaces the buoy's own `hsig_m` as the top feature on the republished data.
-- **Tweed Heads** is now competitive with Brisbane (+1.3 points), despite a zero-lag correlation with Mooloolaba of only ~0.65 — it carries real southern-swell signal that the regulariser keeps.
-- **Caloundra and North Moreton Bay** barely move the needle (+0.2 points each), consistent with their near-neighbour status and limited unique signal.
-- **Palm Beach** adds ~0.3 points alone, and the **Gold-Coast + Palm-Beach pair is actually worse than Gold Coast alone** (+21.4% vs +22.1%). The two buoys are ~25 km apart and Lasso keeps coefficients on both, but the extra columns appear to cost more in noise than they buy in signal at this regularisation strength.
-- **Wind** with all four stations reaches +21.5%, ~1 point over Mooloolaba alone — modest, and below Gold Coast alone.
-
-`hsig_m` is the top feature in every row, so on the republished data the neighbour buoys are useful *additions* rather than replacements for the buoy's own recent history.
+### Linear models
 
 ## Real world performance
 
 Each new year that passes can be scored as a true blind set against our best models. This way we evaluate them against brand new data that wasn't implicitly leaked through the train/test iterative process. Awaiting the QLD wind 2025 release expected September 2026.
 
-**Pre-committed candidates for 2025**, all trained on 2015-2024 with Mooloolaba + 5 neighbours + 3 wind stations:
+**Pre-committed candidates for 2025**:
 
-- **Linear** — Ridge (alpha=1.0)
-- **Neural** — TCN (seq_len=48, channels=(64,), 1 block, 2 epochs)
-- **Ensemble** — NanMean of Ridge + Lasso + HGB
+- TBD
+- TBD
+- **TBD Ensemble**
 
 Scoring a new year against these committed candidates is a re-fit of the same recipe on the same training data, not a load of a serialised model. The `Preprocessor` fitted alongside each model captures the drop list, imputer means, and scaler stats, so the held-out year sees the same transformation the model was trained against — including any schema drift (extra columns are dropped, missing required columns raise).
 
