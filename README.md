@@ -15,6 +15,20 @@ All data in this project comes from the [Queensland Government open data portal]
 
 Thankfully with raw AEST records we don't have to worry about time changes, so `pipeline.clean` can simply localize the naive AEST records to Australia/Brisbane and every unified CSV carries a gap-free `datetime` index in Brisbane time.
 
+### A note on upstream revisions
+
+The QLD portal publishes these as *derived, delayed-mode* wave parameters, and it periodically re-derives and republishes whole yearly resource files. Comparing an October 2025 snapshot against a re-download confirmed this: of ~178k shared timestamps, **26.9% changed**, with a clear signature rather than random drift. No revision notice is published, so the behaviour is documented here.
+
+- **Whole records are recomputed, not just `hsig_m`.** `hmax_m`, `tz_s`, `tp_s`, and `peak_dir_deg` all change on the same ~27% of rows (`sst_c` on ~26%) — the buoy spectra were reprocessed, not patched.
+- **The change is symmetric.** New values are higher 50.3% / lower 49.7% of the time (mean Δ ≈ 0, −0.011 m) and the maximum is unchanged (5.204 m), so it is not a clipping, units, or one-sided shift — but magnitudes are large (median |Δ| = 0.42 m).
+- **Revisions are temporally clustered, not periodic.** They form 195 contiguous blocks (median ~5 days, max 18), never scattered single points, with no time-of-day pattern.
+- **They concentrate in big seas.** Waves >3 m were revised 40% of the time (mean |Δ| 0.63 m) vs ~25% / 0.11 m for 0.5–1.5 m waves, and the largest blocks all fall in the Dec–Mar storm/cyclone season (e.g. 2025-01-27→02-15, 2023-12-01→12-11).
+- **Three years are untouched.** 2017, 2018, and 2021 are byte-identical; 2015/16/19/20/22/23/24/25 were republished.
+
+The net effect is that the revised data is **rougher at every lag** (12h autocorrelation dropped 0.85 → 0.74), which makes the +12h persistence baseline harder to beat: persistence RMSE rose from 26.5 cm on the old snapshot to ~40 cm now. The revision is a data-quality improvement (more accurate storm-period measurements), not a regression — but it means **absolute RMSE is not comparable across snapshots**, while skill-vs-persistence is largely preserved. `test_persistence_baseline_matches_documented_values` pins the current baseline so a future revision is caught rather than silently shifting the headline numbers.
+
+
+
 ### Wave buoy network
 
 30-minute cadence. Mooloolaba is the prediction target; Brisbane, Caloundra, Gold Coast, North Moreton Bay, Palm Beach, Tweed Heads, and Wide Bay feed in as neighbour-buoy features where their histories overlap. Missing or erroneous readings (`-99.9` in the raw files) are replaced with `NaN`.
@@ -113,28 +127,34 @@ All runs use a chronological 80/20 split on the **standard window** (2015-2024 A
 - **Adam `weight_decay`** (1e-4 for the gated cells, 1e-5 for the vanilla RNN) enabled an extra training epoch without overfit (tuned on the smaller feature set; revisit alongside any seq sweep).
 - Inter-layer `rnn_dropout` was tested but never beat the L=1 winners.
 
-### Wider source set on a shorter window (2019-2024)
+### Wider source set, shorter training history (2019-2024)
 
-Switching to the wide-set window (see *Dataset selection*) unlocks Palm Beach, Southport wind, and Wide Bay. Same chronological 80/20 split; persistence baseline is 28.3 cm vs 26.5 cm on the standard window because the recent years have more storm volatility.
+Switching to the wide-set window (see *Dataset selection*) unlocks Palm Beach, Southport wind, and Wide Bay. Both feature sets are scored on the **same test slice** — narrow's natural 80/20 split timestamp (2023-01-01 09:30 → 2024-12-31 23:30, n=35,069) is reused as the wide-set cutoff via `seq_sweep.py` and the `test_start` knob in `linear_playground.py`, so the only differences between rows are feature set (5nb+3w vs 7nb+4w) and training-history depth (140k rows from 2015 vs 70k from 2019). Sequence-model hyperparameters were re-tuned per set (44 wide configs, 41 narrow); linear/HGB/ensemble rows are the best `linear_playground.py` runs.
 
 | Model | Narrow (5nb + 3w) RMSE / Skill | Wide (7nb + 4w) RMSE / Skill | Δ skill |
 |-------|--------------------------------|------------------------------|---------|
-| Persistence | 28.30 cm / — | 28.30 cm / — | — |
-| LSTM | 25.57 / +18.7% | 26.92 / +10.0% | −8.7 |
-| RNN | 24.77 / +23.6% | 24.83 / +23.2% | −0.4 |
-| GRU | 24.14 / +27.6% | 24.75 / +23.8% | −3.8 |
-| HGB | 24.79 / +23.2% | 24.82 / +23.0% | −0.2 |
-| TCN | 24.49 / +25.3% | 24.54 / +25.0% | −0.3 |
-| Lasso | 24.42 / +25.6% | 24.33 / +26.2% | +0.6 |
-| Ridge | 24.25 / +26.6% | 24.18 / +27.0% | +0.4 |
-| **NanMean ensemble (Ridge + Lasso + HGB)** | **23.93 / +28.5%** | **23.90 / +28.7%** | **+0.2** |
+| Persistence | 39.96 cm / — | 39.96 cm / — | — |
+| TCN | 38.58 / +6.9% | 37.67 / +11.3% | +4.4 |
+| LSTM | 37.45 / +12.3% | 38.08 / +9.4% | −2.9 |
+| Lasso | 35.15 / +22.7% | 34.82 / +24.2% | +1.5 |
+| GRU | 34.96 / +23.6% | 35.11 / +23.0% | −0.6 |
+| Ridge | 34.84 / +24.0% | 34.89 / +23.8% | −0.2 |
+| HGB | 34.73 / +24.5% | 35.60 / +20.7% | −3.8 |
+| RNN | 34.57 / +25.3% | 35.28 / +22.2% | −3.1 |
+| **NanMean ensemble (Ridge + Lasso + HGB)** | **34.42 / +25.9%** | **34.40 / +26.0%** | **+0.1** |
+
+Best wide configs from the sweep: RNN `sl48 h256 L2 ep3 wd=1e-4 do=0.1`, GRU `sl48 h64 L1 ep2`, LSTM `sl48 h128 L2 ep3 wd=1e-4 do=0.1`, TCN `sl48 channels=(128,)×4 ep3 wd=1e-4 do=0.2`. Best narrow: RNN `sl48 h128 L2 ep3 wd=1e-4`, GRU `sl48 h64 L1 ep2`, LSTM `sl48 h128 L1 ep3 wd=1e-4`, TCN `sl48 channels=(64,) ep2 do=0.1`.
 
 Reading:
 
-- **Adding Palm Beach + Southport + Wide Bay buys ~0.5 skill points for linear models and essentially nothing for the ensemble** — the wider source set is not a step change. The Gold Coast / Brisbane / Mooloolaba buoys already cover most of the explainable variance for a +12h forecast at this site.
-- **Sequence models regress further with the wider set**, repeating the headline-table pattern: their published-best hyperparameters were tuned for the smaller feature matrix and don't generalise to ~38 input channels (38 vs 31 narrow vs 22 in the originally-published 4nb+2w runs). A fresh `seq_sweep.py` run on the wide set would close the gap.
-- **Persistence is harder to beat on 2019-2024 by absolute RMSE but easier by skill** — the recent window is noisier, so everything has higher RMSE, but the persistence baseline is also higher, so the *gap* widens. The ~+28.7 % ensemble skill on the wide-set window looks better than +27.0 % on the headline table but reflects a different — and harder — test distribution.
-- **Wide Bay's per-year coverage is uneven on this window** (33% in 2019, 32% in 2021, 61% in 2024 — see `notebooks/figures/wave_coverage.png`). It survives because mean-imputation fills the gaps with the buoy's mean, but the row-level sparsity is what limits the wider-set gain.
+- **The wider source set is essentially a wash on a fair window.** The ensemble is dead-flat (+0.1 skill points), Ridge / GRU / Lasso move by ≤1.5 points, and the modest gains (Lasso, TCN) and losses (HGB, RNN) roughly cancel. Mooloolaba + Gold Coast + Brisbane already capture most of the explainable +12h variance at this site; Palm Beach + Southport + Wide Bay don't add much that survives regularisation or ensembling.
+- **TCN is the lone material winner on wide** (+4.4 skill points). A deeper stack (4 blocks at 128 channels) finally finds a config that exploits the wider input — though TCN still trails the linear winners by ~14 skill points and isn't competitive yet on this task.
+- **HGB and RNN regress ~3 skill points on wide.** Both lose more from halving the training history (8y → 4y) than they gain from the extra sources. HGB drops from top-2 single model on narrow to mid-pack on wide.
+- **The best single seq model on each set is now within striking distance of the ensemble** — narrow RNN +25.3 vs ensemble +25.9; wide GRU +23.0 vs ensemble +26.0. The previous headline note that RNN/LSTM "want re-tuning" was right; the broadened-grid sweep absorbs most of the gap.
+- **LSTM trails the family on both sets** (+12% / +9%) — same hidden / layers / epoch envelope as RNN/GRU, but the gated recurrence isn't earning its parameters here.
+- **Wide Bay's per-year coverage is uneven on this window** (33% in 2019, 32% in 2021, 61% in 2024 — see `notebooks/figures/wave_coverage.png`). It survives because mean-imputation fills the gaps with the buoy's mean, but the row-level sparsity remains a known cap on the wider-set gain.
+
+Bottom line: at parity on the same test window, **the narrow set is the better deployment choice** — same headline skill, twice the training data, fewer late-deployment coverage gaps.
 
 ### Lasso: incremental value of each data source
 
@@ -142,23 +162,25 @@ To check that the extra sources actually carry signal, here is a plain `Lasso(al
 
 | Data sources | RMSE (cm) | Skill | Non-zero coefs | Top feature |
 |--------------|-----------|-------|----------------|-------------|
-| Mooloolaba only | 25.3 | +9.2% | 42 / 107 | `hsig_m` |
-| + Caloundra | 25.2 | +10.0% | 47 / 120 | `hsig_m` |
-| + Brisbane | 24.2 | +17.0% | 52 / 120 | `brisbane_hsig_m` |
-| + Gold Coast | 24.1 | +17.8% | 51 / 120 | `gold-coast_hsig_m` |
-| + North Moreton Bay | 25.1 | +10.3% | 49 / 120 | `hsig_m` |
-| + Tweed Heads | 25.2 | +9.8% | 52 / 120 | `hsig_m` |
-| + Palm Beach | 25.2 | +14.4% | 53 / 120 | `hsig_m` |
-| + Gold Coast + Palm Beach | 24.7 | +18.3% | 56 / 133 | `gold-coast_hsig_m` |
-| + wind (4 stations) | 24.4 | +15.3% | 116 / 302 | `hsig_m` |
+| Mooloolaba only | 35.7 | +20.5% | 47 / 107 | `hsig_m` |
+| + Caloundra | 35.6 | +20.7% | 55 / 120 | `hsig_m` |
+| + Brisbane | 35.3 | +21.8% | 57 / 120 | `hsig_m` |
+| + Gold Coast | 35.3 | +22.1% | 56 / 120 | `hsig_m` |
+| + North Moreton Bay | 35.6 | +20.7% | 54 / 120 | `hsig_m` |
+| + Tweed Heads | 35.4 | +21.8% | 53 / 120 | `hsig_m` |
+| + Palm Beach | 36.3 | +20.8% | 53 / 120 | `hsig_m` |
+| + Gold Coast + Palm Beach | 36.1 | +21.4% | 61 / 133 | `hsig_m` |
+| + wind (4 stations) | 35.4 | +21.5% | 113 / 302 | `hsig_m` |
 
-Every added source helps, but not equally:
+The picture is more compressed than it used to be — every extra source moves skill by under 2 points, and a few don't move it at all:
 
-- **Brisbane and Gold Coast** (the southern, swell-upstream buoys) are worth ~7-8 skill points on their own — Gold Coast even displaces the buoy's own `hsig_m` as the top feature.
-- **Palm Beach** adds ~5 skill points alone — a meaningful gain, lower than Gold Coast (its near-neighbour) but well above Caloundra/NMB.
-- **Tweed Heads** barely moves the needle on its own, despite a full 2015-2025 history. The zero-lag correlation with Mooloolaba is only ~0.65 (vs ~0.79 for Gold Coast and ~0.91 for Caloundra), so the southernmost buoy genuinely sits in a different swell context.
-- **Gold Coast + Palm Beach together** lifts skill ~0.4 points over Gold Coast alone — they're partially redundant (the buoys are ~25 km apart) but Lasso keeps coefficients on both, so the two-source pair beats either alone. The current architecture handles this without any merging logic: each source's columns are prefixed, NaN-imputed, and offered to the model side by side.
-- **Wind** with all four stations (now including Lytton and Southport) reaches +15.3%, up from +14.2% with the original two stations — the additional coverage at the Brisbane river mouth and Gold Coast helps modestly.
+- **Brisbane and Gold Coast** (the southern, swell-upstream buoys) are still the strongest standalone additions, worth ~1.3-1.6 skill points each. Unlike before, neither displaces the buoy's own `hsig_m` as the top feature on the republished data.
+- **Tweed Heads** is now competitive with Brisbane (+1.3 points), despite a zero-lag correlation with Mooloolaba of only ~0.65 — it carries real southern-swell signal that the regulariser keeps.
+- **Caloundra and North Moreton Bay** barely move the needle (+0.2 points each), consistent with their near-neighbour status and limited unique signal.
+- **Palm Beach** adds ~0.3 points alone, and the **Gold-Coast + Palm-Beach pair is actually worse than Gold Coast alone** (+21.4% vs +22.1%). The two buoys are ~25 km apart and Lasso keeps coefficients on both, but the extra columns appear to cost more in noise than they buy in signal at this regularisation strength.
+- **Wind** with all four stations reaches +21.5%, ~1 point over Mooloolaba alone — modest, and below Gold Coast alone.
+
+`hsig_m` is the top feature in every row, so on the republished data the neighbour buoys are useful *additions* rather than replacements for the buoy's own recent history.
 
 ## Real world performance
 

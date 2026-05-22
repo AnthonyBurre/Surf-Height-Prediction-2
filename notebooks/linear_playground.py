@@ -49,6 +49,13 @@ CONFIG: dict = {
     "year_min":     None,   # None = data start; e.g. 2024 for the short multi-buoy window
     "year_max":     2024,   # None = data end;   e.g. 2024 to match the wind window
 
+    # Optional explicit test-window cutoff (tz-aware string or pd.Timestamp).
+    # None = natural chronological 80/20. Set this when comparing different
+    # feature sets / windows: e.g. anchor a wide-set (2019-2024) run on the
+    # narrow set's natural split timestamp so both score on the same test
+    # slice. Rows strictly before the cutoff are train; rows at/after are test.
+    "test_start":   None,
+
     # --- extra sources ---
     "neighbours":     ["caloundra", "brisbane", "gold-coast", "north-moreton-bay", "tweed-heads"],     # any subset of: "brisbane", "caloundra", "gold-coast", "north-moreton-bay", "palm-beach", "tweed-heads", "wide-bay"
     "wind_stations":  ["mountain-creek", "deception-bay", "lytton"],  # any subset of: "mountain-creek", "deception-bay", "lytton", "southport"; [] disables wind
@@ -273,8 +280,19 @@ def main() -> None:
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 
-    X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
-    X_p_tr, X_p_te, _, _   = fc.chronological_split(X_p, y)
+    if cfg.get("test_start") is None:
+        X_tr, X_te, y_tr, y_te = fc.chronological_split(X, y)
+        X_p_tr, X_p_te, _, _   = fc.chronological_split(X_p, y)
+    else:
+        ts = pd.Timestamp(cfg["test_start"])
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(fc.SOURCE_TZ)
+        pos = X.index.searchsorted(ts)
+        X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
+        y_tr, y_te = y.iloc[:pos], y.iloc[pos:]
+        pos_p = X_p.index.searchsorted(ts)
+        X_p_tr, X_p_te = X_p.iloc[:pos_p], X_p.iloc[pos_p:]
+        print(f"test_start     : {ts} (override of natural 80/20 split)")
     # One stateful preprocessor: drop → impute → (optional) scale. Fit on
     # train, transform both. Pickle-able alongside the model for held-out
     # year scoring (see Preprocessor docstring).
