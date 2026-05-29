@@ -1,16 +1,15 @@
-"""Residual diagnostics for the three non-ML baselines.
+"""Residual diagnostics for the two non-ML baselines.
 
 Run:  ./.venv/bin/python notebooks/baseline_diagnostics.py
 
-Fits Persistence, SeasonalNaive (24h period), and ClimatologyHour on the
-pre-2023 portion of Mooloolaba and scores them on the same 2023-01-01 →
-2024-12-31 AEST window used by the linear-model sweep — so the headline
-RMSE numbers here are the same persistence numbers the sweep table is
-quoted against, and the other two baselines provide context for *why*
-persistence is the one to beat.
+Fits Persistence and ClimatologyHour on the pre-2023 portion of Mooloolaba
+and scores them on the same 2023-01-01 → 2024-12-31 AEST window used by
+the linear-model sweep — so the headline persistence RMSE here is the same
+number the sweep table is quoted against, and climatology provides the
+"regress to the diurnal mean" floor.
 
 Saves:
-  baseline_residuals.png — 3 stacked residual time series (raw + 7-day
+  baseline_residuals.png — 2 stacked residual time series (raw + 7-day
                             rolling mean) plus a residual-density panel.
 """
 from pathlib import Path
@@ -31,21 +30,13 @@ TEST_START = "2023-01-01"
 # Plot colour per baseline — kept consistent across all panels.
 COLORS = {
     "Persistence":      "#1f77b4",
-    "Seasonal naive":   "#ff7f0e",
     "Climatology hour": "#2ca02c",
 }
 
 
 def _build_baselines() -> list[tuple[str, object]]:
-    """Three baselines: same construction as the linear playground would use.
-
-    SeasonalNaive uses period_steps=48 (24h) — predicts y_{t+h} ≈ y at the
-    same hour 24h before the target time, i.e. 12h before the forecast
-    origin given the 12h horizon.
-    """
     return [
         ("Persistence",      fc.PersistenceForecaster()),
-        ("Seasonal naive",   fc.SeasonalNaiveForecaster(period_steps=48)),
         ("Climatology hour", fc.ClimatologyHourForecaster()),
     ]
 
@@ -79,8 +70,10 @@ def main() -> None:
     results = []
     for name, model in _build_baselines():
         model.fit(X_train, y_train)
-        # Predict over the full series so SeasonalNaive's .shift(24) has
-        # sufficient prefix; then take only the test-window slice.
+        # Predict over the full series, then take only the test-window
+        # slice. Persistence and ClimatologyHour both work on any X; this
+        # also keeps the call shape uniform if a shift-based baseline is
+        # ever reintroduced.
         preds_full = pd.Series(model.predict(wave), index=wave.index, name=name)
         preds = preds_full.loc[y_test.index]
         resid = (y_test - preds).rename(name)
@@ -92,14 +85,14 @@ def main() -> None:
     # Figure: 3 stacked residual time series + density panel
     # ------------------------------------------------------------------ #
     fig, axes = plt.subplots(
-        4, 1, figsize=(14, 11),
-        gridspec_kw={"height_ratios": [1, 1, 1, 1.15]},
+        3, 1, figsize=(14, 9),
+        gridspec_kw={"height_ratios": [1, 1, 1.15]},
     )
     roll_steps = 7 * 48  # 7-day rolling window at 30-min cadence
     ymax = max(np.nanmax(np.abs(r["resid"].to_numpy())) for r in results)
     ylim = (-ymax * 1.05, ymax * 1.05)
 
-    for ax, r in zip(axes[:3], results):
+    for ax, r in zip(axes[:2], results):
         c = COLORS[r["name"]]
         resid = r["resid"].dropna()
         ax.plot(resid.index, resid.values, color=c, linewidth=0.5, alpha=0.35)
@@ -112,9 +105,9 @@ def main() -> None:
         ax.grid(alpha=0.3)
         ax.legend(loc="upper right", fontsize=8)
 
-    # Bottom: residual densities (all 3 overlaid). Use the same x-range so
-    # spread/tail differences read at a glance.
-    ax = axes[3]
+    # Bottom: residual densities (both overlaid). Same x-range so the
+    # spread/tail difference reads at a glance.
+    ax = axes[2]
     edges = np.linspace(-2.5, 2.5, 121)
     for r in results:
         resid = r["resid"].dropna().to_numpy()

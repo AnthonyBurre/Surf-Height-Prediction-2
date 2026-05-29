@@ -28,38 +28,6 @@ class PersistenceForecaster:
         return X[self.target_col].to_numpy()
 
 
-class SeasonalNaiveForecaster:
-    """ŷ_{t+h} = y_{(t+h) - P} for period P.
-
-    For a 12h forecast with P=24h (48 steps), the prediction for t+24 is
-    the observation at t-24 — "same hour yesterday". This captures the
-    diurnal cycle for free. Requires P > h so the lookup is in the past.
-    """
-
-    def __init__(
-        self,
-        period_steps: int = 48,
-        horizon_steps: int = HORIZON_STEPS,
-        target_col: str = TARGET_COL,
-    ) -> None:
-        if period_steps <= horizon_steps:
-            raise ValueError(
-                f"period_steps ({period_steps}) must exceed horizon_steps "
-                f"({horizon_steps}); otherwise the lookup is in the future."
-            )
-        self.period_steps = period_steps
-        self.horizon_steps = horizon_steps
-        self.target_col = target_col
-        # From X indexed at t, we want y_{(t+h) - P} = y_{t - (P - h)}.
-        self._lookback = period_steps - horizon_steps
-
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "SeasonalNaiveForecaster":
-        return self
-
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        return X[self.target_col].shift(self._lookback).to_numpy()
-
-
 class ClimatologyHourForecaster:
     """ŷ_{t+h} = training-set mean of target grouped by hour-of-day at t+h.
 

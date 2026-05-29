@@ -207,7 +207,7 @@ print(result.metrics)
 
 | family          | classes                                                                         |
 |-----------------|---------------------------------------------------------------------------------|
-| baselines       | `PersistenceForecaster`, `SeasonalNaiveForecaster`, `ClimatologyHourForecaster` |
+| baselines       | `PersistenceForecaster`, `ClimatologyHourForecaster` |
 | linear / tree   | any scikit-learn regressor (Ridge, Lasso, HGB, …)                               |
 | sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`       |
 
@@ -229,7 +229,7 @@ All scripts are plain `.py` files — run directly:
 | `seq_playground.py` | Sequence-model playground (RNN / GRU / LSTM / TCN). Single `CONFIG` dict for data window, sources, raw-vs-engineered feature mode, model class, and hyperparameters; auto-detects device and logs each run. |
 | `seq_sweep.py` | Small low-epoch hyperparameter sweep over the RNN / GRU / LSTM forecasters, reusing `seq_playground`'s data loading. Logs every run under the `seqsweep` prefix. |
 | `wave_eda.py` | Wave-only EDA across all eight buoys: coverage, distributions, per-year target stats (Mooloolaba `hsig_m` boxplot + summary lines), seasonality, direction, autocorrelation, cross-source correlation. Saves nine `wave_*` PNGs to `notebooks/figures/`. |
-| `baseline_diagnostics.py` | Fits Persistence, SeasonalNaive, ClimatologyHour on pre-2023 Mooloolaba; scores on the same 2023-01-01 → 2024-12-31 window as the linear sweep. Saves `baseline_residuals.png` — three stacked residual time series (raw + 7-day rolling mean) plus an overlaid residual-density panel. |
+| `baseline_diagnostics.py` | Fits Persistence and ClimatologyHour on pre-2023 Mooloolaba; scores on the same 2023-01-01 → 2024-12-31 window as the linear sweep. Saves `baseline_residuals.png` — two stacked residual time series (raw + 7-day rolling mean) plus an overlaid residual-density panel. |
 | `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves six `wind_*` PNGs to `notebooks/figures/`. |
 | `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
 | `lasso_ablation.py` | Per-source Lasso(α=0.001) ablation: trains on Mooloolaba alone, then plus each extra source (and the Gold-Coast + Palm-Beach pair) on the same 2015-2024 split. Prints a README-ready Markdown table. |

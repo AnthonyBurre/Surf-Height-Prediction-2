@@ -21,7 +21,6 @@ Example
 from .baselines import (
     ClimatologyHourForecaster,
     PersistenceForecaster,
-    SeasonalNaiveForecaster,
 )
 from .config import (
     CIRCULAR_COLS,
@@ -122,7 +121,6 @@ __all__ = [
     # baselines
     "ClimatologyHourForecaster",
     "PersistenceForecaster",
-    "SeasonalNaiveForecaster",
     # neural (lazy)
     "GRUForecaster",
     "LSTMForecaster",

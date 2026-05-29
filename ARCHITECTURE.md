@@ -19,7 +19,7 @@ Surf-Height-Prediction-2/
 │   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
 │   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
 │   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
-│   │   ├── baselines.py        # Persistence, SeasonalNaive, ClimatologyHour forecasters
+│   │   ├── baselines.py        # Persistence, ClimatologyHour forecasters
 │   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
 │   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
 │   │   ├── preprocess.py       # drop_sparse_columns, mean_impute, scale_features + Preprocessor (fit/transform/save/load)
