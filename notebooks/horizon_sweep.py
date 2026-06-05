@@ -12,23 +12,35 @@ combos that came out of the linear sweep:
 
 For each combo the feature matrix is built ONCE (horizon-independent); only
 the target column and `evaluate` call are redone per horizon. Models: Ridge,
-Lasso, HGB-on-persistence-residual, and a nanmean ensemble of the three.
+Lasso, HGB-on-persistence-residual, a nanmean ensemble of the three, plus
+the four sequence forecasters (RNN/GRU/LSTM/TCN) using the best hyperparams
+picked from the narrow + wide sequence sweeps. Sequence models only run on
+the `baseline` and `wide` combos — they need a full circular-encoded input
+frame and the seq sweep only fitted those two feature sets.
 
 All runs share the same pinned test-window cutoff (2023-01-01 AEST) so skill
 scores at any one horizon are directly comparable across combos. Persistence
 is computed per-horizon (it varies a lot — the autocorrelation collapses).
 
 Saves:
-  horizon_sweep.png — two stacked panels (skill-vs-persistence and RMSE)
-                       with one line per combo's ensemble plus persistence.
-  experiments.jsonl entries under name 'hsweep_<combo>_h<H>h_<model>'.
+  horizon_sweep.png — single panel: RMSE vs horizon for just the per-horizon
+                       winners. For each horizon we identify the (combo, arch)
+                       with the lowest RMSE; each distinct winning pair gets a
+                       full-trajectory line across all 6 horizons, with a star
+                       marking the horizon(s) it wins. Persistence is drawn as
+                       a black dashed reference line.
+  experiments.jsonl entries under names 'hsweep_<combo>_h<H>h_<model>' and
+                       'hsweep_seq_<combo>_h<H>h_<arch>'.
 
-Sequence models are intentionally out of scope for the first pass; they'd
-either need per-horizon retraining (~2 min each) or the multi-output-head
-refactor of `neural.py` discussed in the README's Future directions.
+Linear cells are not relogged on rerun (log=False) — the first run already
+laid down 120 hsweep entries and the in-memory metrics are what the plot
+uses. Sequence cells log every time.
+
+Iterate on the chart without paying the 90-min sweep cost:
+    ./.venv/bin/python notebooks/horizon_sweep.py --plot-only
+which reads results from experiments.jsonl and just re-renders the figure.
 """
-from __future__ import annotations
-
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -40,6 +52,10 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Lasso, Ridge
+
+# Notebooks share helpers via sys.path-relative imports.
+sys.path.insert(0, str(Path(__file__).parent))
+from seq_playground import build_features as build_seq_features_frame  # noqa: E402
 
 import forecast as fc
 from forecast.metrics import summarise
@@ -100,7 +116,14 @@ BASELINE_STYLES = {
     "persistence":      {"linestyle": "-",  "color": "#000000", "linewidth": 1.6, "alpha": 0.9},
     "climatology_hour": {"linestyle": ":",  "color": "#555555", "linewidth": 1.5, "alpha": 0.85},
 }
-ARCHITECTURES = ["ridge", "lasso", "hgb"]
+LINEAR_ARCHITECTURES = ["ridge", "lasso", "hgb"]
+SEQ_ARCHITECTURES    = ["rnn", "gru", "lstm", "tcn"]
+ARCHITECTURES        = LINEAR_ARCHITECTURES + SEQ_ARCHITECTURES
+
+# Combos that have a fitted sequence-sweep config. Solo / tweed_mc don't —
+# they'd need their own seq sweep first (probably not interesting; the
+# sequence models depend on neighbour breadth to win).
+SEQ_COMBOS = ["baseline", "wide"]
 
 # Hyperparams — kept exactly in step with the linear playground defaults
 # so the h=12 row of this sweep reproduces the v1 baseline numbers in the
@@ -112,6 +135,36 @@ HGB_KW   = {
     "min_samples_leaf": 50, "l2_regularization": 1.0, "random_state": 42,
     "early_stopping": True, "validation_fraction": 0.15, "n_iter_no_change": 40,
 }
+
+# Best (combo, arch) sequence-model config from the seq sweeps. Each value
+# is the kwargs dict that build_seq_model() unpacks into the matching
+# Forecaster constructor. Picked by lowest RMSE within each (set, arch)
+# group of the seqsweep_<set>_<arch>_* rows in experiments.jsonl.
+SEQ_CONFIGS: dict[tuple[str, str], dict] = {
+    # --- baseline (narrow) ---
+    ("baseline", "rnn"):  {"seq_len": 48, "hidden": 128, "num_layers": 2,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.0},
+    ("baseline", "gru"):  {"seq_len": 48, "hidden":  64, "num_layers": 1,
+                            "epochs": 2, "weight_decay": 0.0,  "rnn_dropout": 0.0},
+    ("baseline", "lstm"): {"seq_len": 48, "hidden": 128, "num_layers": 1,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.0},
+    ("baseline", "tcn"):  {"seq_len": 48, "hidden": 128, "num_layers": 2,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.2},
+    # --- wide ---
+    ("wide",     "rnn"):  {"seq_len": 48, "hidden": 256, "num_layers": 2,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.1},
+    ("wide",     "gru"):  {"seq_len": 48, "hidden":  64, "num_layers": 1,
+                            "epochs": 2, "weight_decay": 0.0,  "rnn_dropout": 0.0},
+    ("wide",     "lstm"): {"seq_len": 48, "hidden": 128, "num_layers": 2,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.1},
+    ("wide",     "tcn"):  {"seq_len": 48, "hidden": 128, "num_layers": 4,
+                            "epochs": 3, "weight_decay": 1e-4, "rnn_dropout": 0.2},
+}
+
+SEQ_BATCH_SIZE = 512
+SEQ_LR = 1e-3
+SEQ_SEED = 42
+SEQ_SCALER = "robust"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +189,27 @@ def build_combo(combo: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
         wind_cols = [c for c in wind.columns if not c.endswith("_deg")]
         X = fc.add_neighbour_features(X, wind, wind_cols)
 
+    sources = ["mooloolaba"] + combo["neighbours"] + combo["wind"]
+    return wave, X, sources
+
+
+def build_seq_combo(combo: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Same window as build_combo but emits the circular-encoded seq frame.
+
+    Sequence forecasters window their own input over time and expect raw
+    channels + sin/cos direction columns, NOT the lag/rolling feature matrix
+    used by the linear/tree models. Mirrors seq_playground's data path so
+    the runs here are directly comparable to the seq sweep tables.
+    """
+    wave = fc.restrict_to_years(
+        fc.load_data(buoy="mooloolaba"), combo["year_min"], combo["year_max"],
+    )
+    neighbours = fc.load_neighbours(wave.index, combo["neighbours"])
+    wind = fc.load_wind(wave.index, combo["wind"])
+    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
+
+    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
+    X = build_seq_features_frame(merged, neighbour_cols, wind, "raw")
     sources = ["mooloolaba"] + combo["neighbours"] + combo["wind"]
     return wave, X, sources
 
@@ -296,80 +370,234 @@ def run_cell(
 
 
 # ---------------------------------------------------------------------------
-# Plot
+# Sequence cell — fit one (arch, combo, horizon)
 # ---------------------------------------------------------------------------
 
-def plot_sweep(
-    results: dict[str, dict[int, dict[str, dict[str, float]]]],
-    baselines: dict[int, dict[str, dict[str, float]]],
-) -> None:
-    """Small multiples by architecture: one column per Ridge/Lasso/HGB.
+def _build_seq_model(arch: str, cfg: dict):
+    common = dict(
+        seq_len=cfg["seq_len"], epochs=cfg["epochs"],
+        batch_size=SEQ_BATCH_SIZE, lr=SEQ_LR, seed=SEQ_SEED,
+        device=fc.auto_device(), verbose=False, scaler=SEQ_SCALER,
+        weight_decay=cfg["weight_decay"],
+    )
+    if arch == "tcn":
+        return fc.TCNForecaster(
+            channels=(cfg["hidden"],) * cfg["num_layers"],
+            dropout=cfg["rnn_dropout"], **common,
+        )
+    cls = {"rnn": fc.SimpleRNNForecaster,
+           "gru": fc.GRUForecaster,
+           "lstm": fc.LSTMForecaster}[arch]
+    return cls(hidden=cfg["hidden"], num_layers=cfg["num_layers"],
+               rnn_dropout=cfg["rnn_dropout"], **common)
 
-    Each column has two stacked panels — skill on top, RMSE on bottom —
-    and within a panel the four combos are colored lines plus the three
-    baselines as gray reference lines. Y-axes are shared across rows so
-    combo crossings between architectures read off directly.
 
-    Args:
-        results:   results[combo_name][horizon_h][model_name] = metrics
-        baselines: baselines[horizon_h][baseline_name]        = metrics
+def run_seq_cell(
+    combo: dict,
+    horizon_h: int,
+    arch: str,
+    cfg: dict,
+    wave: pd.DataFrame,
+    X_seq: pd.DataFrame,
+    sources: list[str],
+    *,
+    log: bool,
+) -> dict[str, float]:
+    """Fit one sequence forecaster at one horizon; return metrics dict.
+
+    Persistence at this (combo, horizon) is computed locally so skill is
+    against the same baseline as the linear runs. Re-uses the pinned
+    TEST_START split exactly like run_cell so seq numbers slot into the
+    same plot rows.
     """
-    horizons = sorted(baselines.keys())
-    fig, axes = plt.subplots(2, 3, figsize=(17, 10.5), sharex="col", sharey="row")
+    horizon_steps = horizon_h * 2
+    y = fc.make_target(wave, horizon_steps=horizon_steps)
 
-    for col, arch in enumerate(ARCHITECTURES):
-        ax_skill = axes[0, col]
-        ax_rmse  = axes[1, col]
+    ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
+    pos   = _pinned_split(X_seq.index, ts)
+    pos_w = _pinned_split(wave.index,   ts)
+    X_tr, X_te = X_seq.iloc[:pos], X_seq.iloc[pos:]
+    y_tr, y_te = y.iloc[:pos],     y.iloc[pos:]
+    X_p_tr = wave[["hsig_m"]].iloc[:pos_w]
+    X_p_te = wave[["hsig_m"]].iloc[pos_w:]
 
-        # --- Combo lines (one per combo, colored) ------------------------
-        for combo in COMBOS:
-            cname = combo["name"]
-            skills = [results[cname][h][arch]["SkillVsBaseline"] for h in horizons]
-            rmses  = [results[cname][h][arch]["RMSE"]            for h in horizons]
-            ax_skill.plot(horizons, skills, marker="o", linewidth=2.0, markersize=7,
-                          color=COMBO_COLORS[cname], label=cname)
-            ax_rmse.plot( horizons, rmses,  marker="o", linewidth=2.0, markersize=7,
-                          color=COMBO_COLORS[cname], label=cname)
+    X_tr_imp, X_te_imp = fc.mean_impute(X_tr, X_te)
+    persist = fc.evaluate(
+        fc.PersistenceForecaster(), X_p_tr, y_tr, X_p_te, y_te,
+        name=f"persistence_h{horizon_h}h_{combo['name']}",
+    )
+    pp = persist.predictions
 
-        # --- Baselines (three gray reference lines per panel) ------------
-        for bname, style in BASELINE_STYLES.items():
-            skills = [baselines[h][bname]["SkillVsBaseline"] for h in horizons]
-            rmses  = [baselines[h][bname]["RMSE"]            for h in horizons]
-            ax_skill.plot(horizons, skills, label=bname.replace("_", " "), **style)
-            ax_rmse.plot( horizons, rmses,  label=bname.replace("_", " "), **style)
+    model = _build_seq_model(arch, cfg)
+    t0 = time.time()
+    model.fit(X_tr_imp, y_tr)
+    preds = model.predict(X_te_imp)
+    elapsed = time.time() - t0
+    metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=pp)
 
-        ax_skill.axhline(0, color="#999999", linewidth=0.8, linestyle="-", alpha=0.6)
-        # Climatology at h=6 sits around skill -1.7; the combo lines are in
-        # 0–0.45. Pad below climatology's worst point so the line stays in
-        # frame at every horizon.
-        ax_skill.set_ylim(-1.9, 0.55)
-        ax_skill.set_title(arch.upper(), fontsize=13, fontweight="bold")
-        ax_skill.grid(alpha=0.3)
-        ax_rmse.grid(alpha=0.3)
-        ax_rmse.set_xticks(horizons)
-        ax_rmse.set_xticklabels([f"{h}h" for h in horizons])
-        ax_rmse.set_xlabel("Forecast horizon (hours)")
+    name = f"hsweep_seq_{combo['name']}_h{horizon_h}h_{arch}"
+    if log:
+        fc.log_run(
+            fc.EvaluationResult(name=name, metrics=metrics,
+                                predictions=preds, model=model),
+            data_sources=sources,
+            train_index=X_tr.index, test_index=X_te.index,
+            n_features=X_seq.shape[1],
+            extra={
+                "combo": combo["name"], "horizon_h": horizon_h,
+                "horizon_steps": horizon_steps, "feature_mode": "raw",
+                "seq_len": cfg["seq_len"], "hidden": cfg["hidden"],
+                "num_layers": cfg["num_layers"], "epochs": cfg["epochs"],
+                "lr": SEQ_LR, "batch_size": SEQ_BATCH_SIZE,
+                "scaler": SEQ_SCALER, "device": fc.auto_device(),
+                "imputation": "mean",
+                "weight_decay": cfg["weight_decay"],
+                "rnn_dropout": cfg["rnn_dropout"],
+                "elapsed_min": round(elapsed / 60, 2),
+            },
+        )
+    return metrics
 
-        if col == 0:
-            ax_skill.set_ylabel("Skill vs persistence")
-            ax_rmse.set_ylabel("RMSE (m)")
 
-    # One legend to the right — keep panels uncluttered. Pull handles from
-    # both rows so combo colors AND baseline linestyles end up in the legend.
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(
-        handles, labels,
-        loc="center right", bbox_to_anchor=(1.005, 0.5),
-        fontsize=10, frameon=True,
-        title="combos (colored)\nbaselines (gray)",
-        title_fontsize=9,
+# ---------------------------------------------------------------------------
+# Plot — chart code lives in viz.results; this notebook just reshapes hsweep
+# rows from experiments.jsonl into the long-format DataFrame the viz helper
+# expects, and adds the persistence baseline row.
+# ---------------------------------------------------------------------------
+
+import re
+
+from viz.results import plot_horizon_winners
+
+_NAME_PAT_SEQ = re.compile(r"^hsweep_seq_(\w+)_h(\d+)h_(\w+)$")
+_NAME_PAT_LIN = re.compile(r"^hsweep_(\w+)_h(\d+)h_(\w+)$")
+_NAME_PAT_TWEED_SEQ = re.compile(r"^seqsweep_tweed_mc_(rnn|gru|lstm|tcn)_.*_h(\d+)h$")
+
+
+def _runs_dataframe() -> pd.DataFrame:
+    """Long-format ``hsweep_*`` runs: one row per (combo, arch, horizon).
+
+    Pulls all matching rows out of ``experiments.jsonl`` via ``find_runs``,
+    parses ``combo`` / ``horizon`` / ``arch`` out of the run name, then
+    keeps only the most recent row per (combo, h, arch) so reruns
+    naturally supersede older entries. Returns columns:
+    ``label``, ``horizon_h``, ``RMSE``, plus ``combo`` / ``arch`` for
+    debugging or further filtering.
+    """
+    df = fc.find_runs(name_prefix="hsweep_")
+    rows: list[dict] = []
+    for _, r in df.iterrows():
+        m = _NAME_PAT_SEQ.match(r["name"]) or _NAME_PAT_LIN.match(r["name"])
+        if not m:
+            continue
+        combo, h, arch = m.group(1), int(m.group(2)), m.group(3)
+        rows.append({
+            "combo": combo, "arch": arch, "horizon_h": h,
+            "label": f"{combo} / {arch}" if arch != "persistence" else "persistence",
+            "RMSE": r["metrics"]["RMSE"],
+            "ts": r["timestamp"],
+        })
+    out = (
+        pd.DataFrame(rows)
+        .sort_values("ts")
+        .drop_duplicates(["combo", "horizon_h", "arch"], keep="last")
+        .drop(columns=["ts"])
+        .reset_index(drop=True)
+    )
+    return out
+
+
+def _tweed_mc_seq_rows() -> pd.DataFrame:
+    """Best-config-per-(arch, horizon) rows from the tweed_mc seq sweep.
+
+    Pulls every ``seqsweep_tweed_mc_*`` entry, groups by (arch, horizon),
+    keeps the lowest-RMSE config per group, and emits long-format rows
+    labelled ``tweed_mc / <arch>`` so they slot into the chart alongside
+    the linear ``hsweep_`` and seq ``hsweep_seq_`` rows.
+    """
+    df = fc.find_runs(name_prefix="seqsweep_tweed_mc_")
+    rows: list[dict] = []
+    for _, r in df.iterrows():
+        m = _NAME_PAT_TWEED_SEQ.match(r["name"])
+        if not m:
+            continue
+        rows.append({
+            "arch": m.group(1), "horizon_h": int(m.group(2)),
+            "RMSE": r["metrics"]["RMSE"],
+        })
+    if not rows:
+        return pd.DataFrame(columns=["combo", "arch", "horizon_h", "label", "RMSE"])
+    best = (
+        pd.DataFrame(rows)
+        .sort_values("RMSE")
+        .drop_duplicates(["arch", "horizon_h"], keep="first")
+    )
+    best["combo"] = "tweed_mc"
+    best["label"] = "tweed_mc / " + best["arch"]
+    return best[["combo", "arch", "horizon_h", "label", "RMSE"]].reset_index(drop=True)
+
+
+def _climatology_rows(horizons: list[int]) -> pd.DataFrame:
+    """Compute ClimatologyHour RMSE per horizon on the pinned test window.
+
+    Cheap (Mooloolaba-only, no model fit) so we recompute on every plot
+    call rather than relying on log entries that may have drifted. Returns
+    rows in the same long format as ``_runs_dataframe`` so they can be
+    concatenated directly.
+    """
+    wave_full = fc.restrict_to_years(fc.load_data(buoy="mooloolaba"), None, 2024)
+    rows = []
+    for h in horizons:
+        rmse = compute_baselines(wave_full, h)["climatology_hour"]["RMSE"]
+        rows.append({"combo": None, "arch": "climatology_hour", "horizon_h": h,
+                     "label": "climatology hour", "RMSE": float(rmse)})
+    return pd.DataFrame(rows)
+
+
+def save_horizon_winners_chart(runs: pd.DataFrame) -> None:
+    """Render the per-horizon-winners chart to ``figures/horizon_sweep.png``.
+
+    Drops ensemble entries before winner-finding so the chart compares
+    single-model performances directly. Both non-ML baselines (persistence
+    and climatology-hour) are overlaid for context: persistence in black
+    dashed (the project's headline reference), climatology-hour dotted
+    gray (the "regress to the diurnal mean" floor).
+    """
+    horizons = sorted(runs["horizon_h"].unique())
+
+    # Drop ensembles — they muddy the per-model comparison; the user wants
+    # to see which individual model wins at each horizon.
+    runs = runs[runs["arch"] != "ensemble"].copy()
+    # Append tweed_mc seq best-config-per-arch + climatology baseline rows.
+    runs = pd.concat(
+        [runs, _tweed_mc_seq_rows(), _climatology_rows(horizons)],
+        ignore_index=True,
     )
 
-    fig.suptitle(
-        "Multi-horizon performance by architecture × data-source combo  —  pinned 2023-01-01 → 2024-12-31 test window",
-        fontsize=13, y=1.005,
+    print("\n=== Per-horizon winners (ensembles excluded) ===")
+    contenders = runs[~runs["label"].isin(["persistence", "climatology hour"])]
+    for h in horizons:
+        sub = contenders[contenders["horizon_h"] == h]
+        if sub.empty:
+            continue
+        win = sub.loc[sub["RMSE"].idxmin()]
+        print(f"  h={h:>3}h  {win['combo']:>10}/{win['arch']:<10}  RMSE {win['RMSE']:.4f}")
+
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+    plot_horizon_winners(
+        runs, horizon_col="horizon_h", metric_col="RMSE", label_col="label",
+        baseline_label={
+            "persistence":      {"linestyle": "--", "color": "#000000", "alpha": 0.8},
+            "climatology hour": {"linestyle": ":",  "color": "#555555", "alpha": 0.8},
+        },
+        title=("Best (non-ensemble) models per forecast horizon  —  pinned "
+               "2023-01-01 → 2024-12-31 test window\n"
+               "★ marks the lowest-RMSE model at each horizon"),
+        ax=ax,
     )
-    fig.tight_layout(rect=[0, 0, 0.93, 1])
+    ax.set_xlabel("Forecast horizon (hours)")
+    ax.set_ylabel("RMSE (m)")
+    fig.tight_layout()
     out = FIG_DIR / "horizon_sweep.png"
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -408,7 +636,10 @@ def main() -> None:
         for h in HORIZONS_H:
             print(f"\n  --- h={h}h ---")
             t_cell = time.time()
-            per_h[h] = run_cell(combo, h, wave, X, sources, log=True)
+            # log=False: 120 linear hsweep entries are already in
+            # experiments.jsonl from the first run; rerunning is fast and
+            # gives us fresh metrics, but logging again would duplicate.
+            per_h[h] = run_cell(combo, h, wave, X, sources, log=False)
             ens = per_h[h]["ensemble"]
             pst = per_h[h]["persistence"]
             print(f"  [{time.time() - t_cell:5.1f}s] "
@@ -416,7 +647,28 @@ def main() -> None:
                   f"ensemble RMSE {ens['RMSE']:.4f}  Skill {ens['SkillVsBaseline']:+.4f}")
         results[combo["name"]] = per_h
 
-    print(f"\nTotal sweep time: {time.time() - t0:.1f}s")
+    print(f"\nLinear sweep time: {time.time() - t0:.1f}s")
+
+    # --- Sequence models (only for combos with a fitted seq config) ------
+    t_seq = time.time()
+    seq_combos = [c for c in COMBOS if c["name"] in SEQ_COMBOS]
+    for combo in seq_combos:
+        print(f"\n{'=' * 70}\nSeq combo: {combo['name']}\n{'=' * 70}")
+        wave, X_seq, sources = build_seq_combo(combo)
+        print(f"  seq window  {wave.index.min().date()} → {wave.index.max().date()}   "
+              f"rows {len(wave):,}   features {X_seq.shape[1]}")
+        for arch in SEQ_ARCHITECTURES:
+            cfg = SEQ_CONFIGS[(combo["name"], arch)]
+            print(f"\n  === {arch.upper()}  h{cfg['hidden']} L{cfg['num_layers']} "
+                  f"ep{cfg['epochs']} wd{cfg['weight_decay']:g} do{cfg['rnn_dropout']:g} ===")
+            for h in HORIZONS_H:
+                t_cell = time.time()
+                metrics = run_seq_cell(combo, h, arch, cfg, wave, X_seq, sources, log=True)
+                results[combo["name"]][h][arch] = metrics
+                print(f"    h={h:>3}h  [{time.time() - t_cell:6.1f}s]  "
+                      f"RMSE {metrics['RMSE']:.4f}  Skill {metrics['SkillVsBaseline']:+.4f}")
+    print(f"\nSeq sweep time: {time.time() - t_seq:.1f}s")
+    print(f"Total sweep time: {time.time() - t0:.1f}s")
 
     # --- Summary table for the log -----------------------------------------
     print("\nSummary (ensemble RMSE / skill by horizon):")
@@ -429,8 +681,12 @@ def main() -> None:
         print(f"  h={h:>3}h  " + "  ".join(f"{r}" for r in rmses))
         print(f"   skill  " + "  ".join(f"{s}" for s in skills))
 
-    plot_sweep(results, baselines)
+    save_horizon_winners_chart(_runs_dataframe())
 
 
 if __name__ == "__main__":
-    main()
+    if "--plot-only" in sys.argv:
+        # Replot from experiments.jsonl without re-running the 90-min sweep.
+        save_horizon_winners_chart(_runs_dataframe())
+    else:
+        main()

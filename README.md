@@ -170,7 +170,7 @@ Run tests after changes:
 - **`qld_ckan`**: Downloads yearly records from the QLD CKAN Datastore API, unifies the schema, and writes a cleaned CSV per source.
     - `qld_ckan.wave` (wave buoys) 
     - `qld_ckan.wind` (air-quality-station 10 m wind)
-- **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-modelling diagnostics.
+- **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-experiment result charts that consume `forecast.find_runs` output.
 - **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, and an evaluation harness. See *Available forecasters* below for the model list.
 
 Experiment scripts in `notebooks/` run on top of these packages.

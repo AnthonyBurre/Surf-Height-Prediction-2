@@ -52,8 +52,13 @@ from .preprocess import (
     scale_features,
 )
 from .experiments import (
+    best_metric,
+    best_run,
     compose_run_name,
     evaluate_and_log,
+    find_runs,
+    latest_metric,
+    latest_run,
     log_run,
     read_log,
     recent_runs,
@@ -143,8 +148,13 @@ __all__ = [
     "mean_impute",
     "scale_features",
     # experiments
+    "best_metric",
+    "best_run",
     "compose_run_name",
     "evaluate_and_log",
+    "find_runs",
+    "latest_metric",
+    "latest_run",
     "log_run",
     "read_log",
     "recent_runs",
