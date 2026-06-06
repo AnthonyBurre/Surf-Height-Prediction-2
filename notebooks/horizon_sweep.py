@@ -472,31 +472,71 @@ from viz.results import plot_horizon_winners
 _NAME_PAT_SEQ = re.compile(r"^hsweep_seq_(\w+)_h(\d+)h_(\w+)$")
 _NAME_PAT_LIN = re.compile(r"^hsweep_(\w+)_h(\d+)h_(\w+)$")
 _NAME_PAT_TWEED_SEQ = re.compile(r"^seqsweep_tweed_mc_(rnn|gru|lstm|tcn)_.*_h(\d+)h$")
+# recsweep_<family>_h<H>h — each family on its own ablation-recommended set.
+# Treated as combo="rec" so it lands in the same per-horizon winner search
+# as the hand-picked hsweep_ combos.
+_NAME_PAT_RECSWEEP = re.compile(r"^recsweep_(\w+)_h(\d+)h$")
+
+# Display-only relabel for the "baseline" combo. The combo name lived in code
+# and JSONL as "baseline" before non-model baselines (persistence, climatology)
+# were drawn on the same chart — without this map the legend reads
+# "baseline / hgb" alongside literal baseline lines, which is confusing.
+# Keeps the data-side name unchanged so existing log entries still match.
+_COMBO_DISPLAY = {
+    "baseline": "5b+3w",
+    "tweed_mc": "tweed_mc",
+    "solo": "solo",
+    "wide": "wide",
+    "rec": "rec",
+}
+
+
+def _combo_label(combo: str) -> str:
+    return _COMBO_DISPLAY.get(combo, combo)
 
 
 def _runs_dataframe() -> pd.DataFrame:
-    """Long-format ``hsweep_*`` runs: one row per (combo, arch, horizon).
+    """Long-format chart-candidate runs: one row per (combo, arch, horizon).
 
-    Pulls all matching rows out of ``experiments.jsonl`` via ``find_runs``,
-    parses ``combo`` / ``horizon`` / ``arch`` out of the run name, then
-    keeps only the most recent row per (combo, h, arch) so reruns
-    naturally supersede older entries. Returns columns:
-    ``label``, ``horizon_h``, ``RMSE``, plus ``combo`` / ``arch`` for
-    debugging or further filtering.
+    Pulls every ``hsweep_*`` row plus every ``recsweep_*`` row from
+    ``experiments.jsonl``. ``hsweep_*`` rows carry a hand-picked combo name
+    in the run name (e.g. ``hsweep_solo_h12h_ridge``); ``recsweep_*`` rows
+    are tagged with the synthetic combo ``"rec"`` so each family on its
+    ablation-recommended station set lands alongside the hand-picked combos
+    in the per-horizon winner search.
+
+    Keeps only the most recent row per (combo, h, arch) so reruns naturally
+    supersede older entries. Returns columns: ``label``, ``horizon_h``,
+    ``RMSE``, plus ``combo`` / ``arch`` for debugging or further filtering.
     """
-    df = fc.find_runs(name_prefix="hsweep_")
     rows: list[dict] = []
-    for _, r in df.iterrows():
+
+    df_hsweep = fc.find_runs(name_prefix="hsweep_")
+    for _, r in df_hsweep.iterrows():
         m = _NAME_PAT_SEQ.match(r["name"]) or _NAME_PAT_LIN.match(r["name"])
         if not m:
             continue
         combo, h, arch = m.group(1), int(m.group(2)), m.group(3)
         rows.append({
             "combo": combo, "arch": arch, "horizon_h": h,
-            "label": f"{combo} / {arch}" if arch != "persistence" else "persistence",
+            "label": f"{_combo_label(combo)} / {arch}" if arch != "persistence" else "persistence",
             "RMSE": r["metrics"]["RMSE"],
             "ts": r["timestamp"],
         })
+
+    df_rec = fc.find_runs(name_prefix="recsweep_")
+    for _, r in df_rec.iterrows():
+        m = _NAME_PAT_RECSWEEP.match(r["name"])
+        if not m:
+            continue
+        family, h = m.group(1), int(m.group(2))
+        rows.append({
+            "combo": "rec", "arch": family, "horizon_h": h,
+            "label": f"{_combo_label('rec')} / {family}",
+            "RMSE": r["metrics"]["RMSE"],
+            "ts": r["timestamp"],
+        })
+
     out = (
         pd.DataFrame(rows)
         .sort_values("ts")
@@ -533,7 +573,7 @@ def _tweed_mc_seq_rows() -> pd.DataFrame:
         .drop_duplicates(["arch", "horizon_h"], keep="first")
     )
     best["combo"] = "tweed_mc"
-    best["label"] = "tweed_mc / " + best["arch"]
+    best["label"] = _combo_label("tweed_mc") + " / " + best["arch"]
     return best[["combo", "arch", "horizon_h", "label", "RMSE"]].reset_index(drop=True)
 
 

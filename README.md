@@ -184,12 +184,16 @@ Numbers behind the chart:
 
 | h | Better baseline RMSE (m) | Best single model | RMSE (m) | Skill vs better baseline | Best ensemble | RMSE (m) | Skill vs better baseline |
 |---|---|---|---|---|---|---|---|
-| 6h  | 0.291 (persistence) | baseline / HGB-on-residual | 0.254 | +0.127 | wide ensemble | 0.256 | +0.120 |
-| 12h | 0.400 (persistence) | wide / Lasso | 0.348 | +0.129 | wide ensemble | 0.344 | +0.138 |
-| 24h | 0.479 (climatology) | tweed_mc / GRU | 0.434 | +0.093 | tweed_mc ensemble | 0.431 | +0.099 |
+| 6h  | 0.291 (persistence) | 5b+3w / HGB-on-residual | 0.254 | +0.127 | **rec ensemble** | **0.254** | **+0.128** |
+| 12h | 0.400 (persistence) | **rec / GRU** | **0.348** | **+0.130** | **rec ensemble** | **0.342** | **+0.145** |
+| 24h | 0.479 (climatology) | tweed_mc / GRU | 0.434 | +0.094 | tweed_mc ensemble | 0.431 | +0.100 |
 | 36h | 0.479 (climatology) | tweed_mc / RNN | 0.452 | +0.056 | solo ensemble | 0.449 | +0.063 |
-| 48h | 0.479 (climatology) | solo / Lasso | 0.458 | +0.044 | baseline ensemble | 0.459 | +0.042 |
-| 72h | 0.479 (climatology) | tweed_mc / RNN | 0.473 | +0.012 | baseline ensemble | 0.477 | +0.004 |
+| 48h | 0.479 (climatology) | solo / Lasso | 0.458 | +0.044 | **rec ensemble** | **0.458** | **+0.044** |
+| 72h | 0.479 (climatology) | tweed_mc / RNN | 0.473 | +0.013 | 5b+3w ensemble | 0.477 | +0.004 |
+
+The combo shorthand: `solo` = primary buoy only; `tweed_mc` = primary + Tweed Heads + Mountain Creek wind; `5b+3w` = primary + 5 wave neighbours + 3 wind stations; `wide` = primary + 7 neighbours + 4 wind stations on the shorter 2019-2024 window; `rec` = each family fit on its own ablation-recommended station set (see *Feature ablation*).
+
+Bold rows are picks newly added by the recommended-set search (`notebooks/recommended_sweep.py`). They displace the prior winners at h=6 (ensemble) and h=12 (both single and ensemble) and tie at h=48 (ensemble). At h=24/36/72 the prior `tweed_mc` / `solo` / `5b+3w` picks still win because they trained on the longer 2015-2024 window; the recommended-set search is locked to the ablation's 2019-2024 fixed window.
 
 ### Linear models (h=12 deep dive)
 
@@ -334,7 +338,7 @@ All scripts are plain `.py` files — run directly:
 ```
 
 
-## Roadmap
+## Roadmap / Expansions
 
 1. **Predict quantiles, not just the mean.** Quantile HGB (`HistGradientBoostingRegressor(loss="quantile", quantile=q)`) for P10/P50/P90, or conformalised intervals over Ridge. Also the structural fix for the tail underfit — residuals-vs-predicted shows bias at high wave heights that pinball loss addresses and a target transform won't.
 
