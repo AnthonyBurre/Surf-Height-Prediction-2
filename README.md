@@ -5,28 +5,29 @@ An exercise in predictive modeling, this project is all about forecasting signif
 
 ## Objective
 
-Given observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 12h*. 
+Given observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 6h, 12h, 24h, 36h, 48h, 72h*.
 
-At 12h the autocorrelation of `hsig_m` is ≈ 0.81, so persistence is a stiff baseline. Evaluation is a chronological 80/20 split; the headline metric is **skill score versus persistence** (a positive score means the model added information over "it'll be the same as now"). 
+Evaluation uses a chronological 80/20 split with a pinned 2023-01-01 → 2024-12-31 test window. The headline metric is RMSE in meters and compared against two non-model predictive .
 
-## Data sources
+## Data source
 
-All data in this project comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), which provides us with several wind and wave monitoring stations in the region.
+All data in this project comes from the [Queensland Government open data portal](https://www.data.qld.gov.au/organization/environment-tourism-science-and-innovation), which provides us with several wind and wave monitoring stations in the region. Since all raw records are AEST we don't have to worry about time changes, and every output unified CSV carries a gap-free Brisbane `datetime` index.
 
-Thankfully with raw AEST records we don't have to worry about time changes, so `pipeline.clean` can simply localize the naive AEST records to Australia/Brisbane and every unified CSV carries a gap-free `datetime` index in Brisbane time.
-
-### A note on upstream revisions
+### Upstream revisions
 
 The QLD portal publishes these as *derived, delayed-mode* wave parameters, and it periodically re-derives and republishes whole yearly resource files. Comparing an October 2025 snapshot against a re-download confirmed this: of ~178k shared timestamps, **26.9% changed**, with a clear signature rather than random drift. No revision notice is published, so the behaviour is documented here.
 
 - **Whole records are recomputed, not just `hsig_m`.** `hmax_m`, `tz_s`, `tp_s`, and `peak_dir_deg` all change on the same ~27% of rows (`sst_c` on ~26%) — the buoy spectra were reprocessed, not patched.
-- **The change is symmetric.** New values are higher 50.3% / lower 49.7% of the time (mean Δ ≈ 0, −0.011 m) and the maximum is unchanged (5.204 m), so it is not a clipping, units, or one-sided shift — but magnitudes are large (median |Δ| = 0.42 m).
+- **The change is symmetric.** New values are higher 50.3% / lower 49.7% of the time (mean Δ ≈ 0, -0.011 m) and the maximum is unchanged (5.204 m), so it is not a clipping, units, or one-sided shift — but magnitudes are large (median |Δ| = 0.42 m).
 - **Revisions are temporally clustered, not periodic.** They form 195 contiguous blocks (median ~5 days, max 18), never scattered single points, with no time-of-day pattern.
-- **They concentrate in big seas.** Waves >3 m were revised 40% of the time (mean |Δ| 0.63 m) vs ~25% / 0.11 m for 0.5–1.5 m waves, and the largest blocks all fall in the Dec–Mar storm/cyclone season (e.g. 2025-01-27→02-15, 2023-12-01→12-11).
+- **They concentrate in big seas.** Waves >3 m were revised 40% of the time (mean |Δ| 0.63 m) vs ~25% / 0.11 m for 0.5-1.5 m waves, and the largest blocks all fall in the Dec–Mar storm/cyclone season (e.g. 2025-01-27→02-15, 2023-12-01→12-11).
 - **Three years are untouched.** 2017, 2018, and 2021 are byte-identical; 2015/16/19/20/22/23/24/25 were republished.
 
-The net effect is that the revised data is **rougher at every lag** (12h autocorrelation dropped 0.85 → 0.74), which makes the +12h persistence baseline harder to beat: persistence RMSE rose from 26.5 cm on the old snapshot to ~40 cm now. The revision is a data-quality improvement (more accurate storm-period measurements), not a regression — but it means **absolute RMSE is not comparable across snapshots**, while skill-vs-persistence is largely preserved. `test_persistence_baseline_matches_documented_values` pins the current baseline so a future revision is caught rather than silently shifting the headline numbers.
+The net effect is that the revised data is rougher:
+- 12h autocorrelation dropped 0.85 → 0.74
+- persistence RMSE rose from 26.5 cm on the old snapshot to ~40 cm now.
 
+I assume the revision is a data-quality improvement (more accurate storm-period measurements), not a regression — but it means **absolute RMSE is not comparable across snapshots**, while skill-vs-persistence is largely preserved. `test_persistence_baseline_matches_documented_values` pins the current baseline so a future revision is caught rather than silently shifting the headline numbers.
 
 
 ### Wave buoy network
@@ -101,11 +102,50 @@ X_2025_p = preproc.transform(X_2025)  # raises if any fit-time column is missing
 `transform()` enforces the schema the preprocessor was fitted on: any missing required column raises `ValueError`; extra columns (e.g. a new wind station appearing later) are silently dropped. This catches the failure mode where a held-out year's feature matrix doesn't line up with the training-time decisions — without the class, that mismatch would surface as a silently wrong prediction.
 
 
+## Non-model baselines
+
+Two no-model references frame every result in this project:
+
+- **Persistence** — predict ŷ(t+h) = y(t). Strong at short horizons because Mooloolaba's `hsig_m` is highly autocorrelated on the order of hours, so "looks like now" is hard to beat in the first half-day.
+- **Climatology hour** — predict the train-set mean of `hsig_m` conditioned on hour-of-day(t+h). Horizon-independent: it ignores `t` entirely, so its RMSE is flat at ~0.48 m across every horizon.
+
+The two crossover between **h=12 and h=24** on the pinned 2023-01-01 → 2024-12-31 test window — persistence wins for h≤12, climatology from h≥24 onward:
+
+| h | Persistence RMSE (m) | Climatology hour RMSE (m) | Better |
+|---|---|---|---|
+| 6h  | 0.291 | 0.479 | persistence |
+| 12h | 0.400 | 0.479 | persistence |
+| 24h | 0.529 | 0.479 | **climatology** |
+| 36h | 0.562 | 0.479 | climatology |
+| 48h | 0.574 | 0.479 | climatology |
+| 72h | 0.624 | 0.479 | climatology |
+
+Residual diagnostics at the crossover horizon (h=24) show *why* climatology is the harder reference past this point — persistence error is roughly symmetric noise (it just doesn't know what wave height looks like a day out) while climatology has a tighter core but a left-skewed tail, systematically under-predicting the biggest swells.
+
+![Baseline residuals at h=24](notebooks/figures/baseline_residuals.png)
+
 ## Model selection and tuning
 
-### Linear models
+Models are evaluated across six forecast horizons (6h → 72h) on the pinned 2023-01-01 → 2024-12-31 test window. The figure below shows the lowest-RMSE single (non-ensemble) model at each horizon; every line is a (dataset, architecture) combo that won at least one horizon, with stars marking its winning horizons. The "best baseline" backdrop is the lower envelope of persistence and climatology — see *Non-model baselines* above for the per-horizon breakdown.
 
-Nine configs were swept through `notebooks/linear_playground.py`, all scored on the same pinned test window (2023-01-01 → 2024-12-31 AEST) so RMSE is directly comparable. Each config runs Ridge (α=1), Lasso (α=0.001), HGB-on-residuals (`max_iter=800`, `lr=0.03`, `depth=6`), and a nanmean ensemble of the three. Persistence on the shared window is **RMSE 0.3996 m** (39.96 cm).
+![Best model per forecast horizon](notebooks/figures/horizon_sweep.png)
+
+Numbers behind the chart:
+
+| h | Better baseline RMSE (m) | Best single model | RMSE (m) | Skill vs better baseline | Best ensemble | RMSE (m) | Skill vs better baseline |
+|---|---|---|---|---|---|---|---|
+| 6h  | 0.291 (persistence) | baseline / HGB-on-residual | 0.254 | +0.127 | wide ensemble | 0.256 | +0.120 |
+| 12h | 0.400 (persistence) | wide / Lasso | 0.348 | +0.129 | wide ensemble | 0.344 | +0.138 |
+| 24h | 0.479 (climatology) | tweed_mc / GRU | 0.434 | +0.093 | tweed_mc ensemble | 0.431 | +0.099 |
+| 36h | 0.479 (climatology) | tweed_mc / RNN | 0.452 | +0.056 | solo ensemble | 0.449 | +0.063 |
+| 48h | 0.479 (climatology) | solo / Lasso | 0.458 | +0.044 | baseline ensemble | 0.459 | +0.042 |
+| 72h | 0.479 (climatology) | tweed_mc / RNN | 0.473 | +0.012 | baseline ensemble | 0.477 | +0.004 |
+
+Skill collapses with horizon: +12.9% over the harder-of-persistence-or-climatology at h=12 down to +1.2% by h=72, where every model converges on the climatological mean because there is nothing left to predict from observations at *t*. The combo that wins also shifts — wide/baseline (broad neighbour sets) hold short horizons where local context matters, and the narrower **tweed_mc** (single upstream buoy + one wind station) takes over from h=24 onward, consistent with long-horizon skill coming from swell-upstream signal rather than local conditions.
+
+### Linear models (h=12 deep dive)
+
+Nine configs were swept through `notebooks/linear_playground.py`, all at h=12 — the original prediction target before the horizon sweep. The cross-horizon view is the chart above; this section drills into how source breadth and regularisation interact when persistence is still the harder reference. All scored on the same pinned test window (2023-01-01 → 2024-12-31 AEST) so RMSE is directly comparable. Each config runs Ridge (α=1), Lasso (α=0.001), HGB-on-residuals (`max_iter=800`, `lr=0.03`, `depth=6`), and a nanmean ensemble of the three. Persistence on the shared window is **RMSE 0.3996 m** (39.96 cm).
 
 | Config | Window | Sources | Feats | Best member | Ensemble RMSE (m) | Skill vs persistence |
 |---|---|---|---|---|---|---|
@@ -142,11 +182,17 @@ Each new year that passes can be scored as a true blind set against our best mod
 
 Scoring a new year against these committed candidates is a re-fit of the same recipe on the same training data, not a load of a serialised model. The `Preprocessor` fitted alongside each model captures the drop list, imputer means, and scaler stats, so the held-out year sees the same transformation the model was trained against — including any schema drift (extra columns are dropped, missing required columns raise).
 
-| Year | Model | RMSE (cm) | Skill |
-|------|-------|-----------|-------|
-| 2025 | Ridge | _TBD_ | _TBD_ |
-| 2025 | TCN | _TBD_ | _TBD_ |
-| 2025 | Ensemble | _TBD_ | _TBD_ |
+| Year | h | Model | RMSE (cm) | Skill |
+|------|---|-------|-----------|-------|
+| 2025 | 12h | Ridge | _TBD_ | _TBD_ |
+| 2025 | 12h | TCN | _TBD_ | _TBD_ |
+| 2025 | 12h | Ensemble | _TBD_ | _TBD_ |
+| 2025 | 24h | Ridge | _TBD_ | _TBD_ |
+| 2025 | 24h | TCN | _TBD_ | _TBD_ |
+| 2025 | 24h | Ensemble | _TBD_ | _TBD_ |
+| 2025 | 48h | Ridge | _TBD_ | _TBD_ |
+| 2025 | 48h | TCN | _TBD_ | _TBD_ |
+| 2025 | 48h | Ensemble | _TBD_ | _TBD_ |
 
 
 ## Reproducibility
@@ -223,27 +269,11 @@ All scripts are plain `.py` files — run directly:
 ./.venv/bin/python notebooks/<script>.py
 ```
 
-| script | description |
-|--------|-------------|
-| `linear_playground.py` | Linear / tree playground (Ridge / Lasso / HGB). One `CONFIG` dict for data window, sources, `FeatureConfig` knobs, HGB residual mode, and an optional nanmean ensemble. |
-| `seq_playground.py` | Sequence-model playground (RNN / GRU / LSTM / TCN). Single `CONFIG` dict for data window, sources, raw-vs-engineered feature mode, model class, and hyperparameters; auto-detects device and logs each run. |
-| `seq_sweep.py` | Small low-epoch hyperparameter sweep over the RNN / GRU / LSTM forecasters, reusing `seq_playground`'s data loading. Logs every run under the `seqsweep` prefix. |
-| `wave_eda.py` | Wave-only EDA across all eight buoys: coverage, distributions, per-year target stats (Mooloolaba `hsig_m` boxplot + summary lines), seasonality, direction, autocorrelation, cross-source correlation. Saves nine `wave_*` PNGs to `notebooks/figures/`. |
-| `baseline_diagnostics.py` | Fits Persistence and ClimatologyHour on pre-2023 Mooloolaba; scores on the same 2023-01-01 → 2024-12-31 window as the linear sweep. Saves `baseline_residuals.png` — two stacked residual time series (raw + 7-day rolling mean) plus an overlaid residual-density panel. |
-| `wind_eda.py` | Wind-only EDA across the available stations: coverage, time series, autocorrelation, direction roses, station comparison. Saves six `wind_*` PNGs to `notebooks/figures/`. |
-| `wave_wind_eda.py` | Joint wave + wind EDA: alignment overview, feature-horizon screening, joint distributions. Saves three `wave_wind_*` PNGs to `notebooks/figures/`. |
-| `lasso_ablation.py` | Per-source Lasso(α=0.001) ablation: trains on Mooloolaba alone, then plus each extra source (and the Gold-Coast + Palm-Beach pair) on the same 2015-2024 split. Prints a README-ready Markdown table. |
 
-
-
-## Future directions
+## Roadmap
 
 1. **Predict quantiles, not just the mean.** Quantile HGB (`HistGradientBoostingRegressor(loss="quantile", quantile=q)`) for P10/P50/P90, or conformalised intervals over Ridge. Also the structural fix for the tail underfit — residuals-vs-predicted shows bias at high wave heights that pinball loss addresses and a target transform won't.
 
-2. **Multi-horizon forecasts.** `HORIZON_STEPS` (`forecast/config.py:11`) is centralised but the pipeline only fits one h. At 24/48/72h persistence collapses, and that's where a real model has room to win. Makes the project read as a surf forecast rather than a +12h `hsig` regressor.
+2. **Multi-output forecasts.** 2 m at 90°/14 s breaks differently from 2 m at 150°/8 s. Forecast `tp_s` and `peak_dir_deg` jointly (`MultiOutputRegressor`) so downstream code can apply break-specific transforms.
 
-3. **Multi-output forecasts.** 2 m at 90°/14 s breaks very differently from 2 m at 150°/8 s. Forecast `tp_s` and `peak_dir_deg` jointly (`MultiOutputRegressor`) so downstream code can apply break-specific transforms.
-
-4. **Mooloolaba tide gauge.** Resource `mooloolaba-tide-gauge-archived-interval-recordings` at the target buoy location — schema is `Date`, `Time`, `Reading` (water level m). Tidal range may carry second-order modulation of `hsig_m`. Catch: only 2023-2025 are on the CKAN Datastore API; pre-2023 are flat CSV/TXT resources not handled by `paginate_records`. Plan: new `qld_ckan.tide` sub-package with a flat-resource downloader. First wire 2023-2025 as a fast experiment; only build older-year ingestion if skill moves.
-
-5. **Long-cadence historical bundles.** Deeper wave history for swell-upstream buoys: Mooloolaba 2000-2014 (1h), Brisbane 1976-2011 (12h), Gold Coast 1987-2014 (6h), Tweed Heads 1995-2011 (1h). Excluded from `qld_ckan.wave.constants.BUOYS` because the pipeline assumes a 30-min axis and these have drifting minute offsets (e.g. 08:55, 14:56). Needs: a cadence parameter on the wave pipeline, snap-to-grid (floor + dedup) before reindex, and a join strategy mixing coarse history with the 30-min grid. Resource IDs at `coastal-data-system-waves-{slug}` on `data.qld.gov.au`. QLD's 1989-1992 DST window forces choosing fixed UTC+10 (`Etc/GMT-10`) or per-row DST.
+3. **Long-cadence historical bundles.** Deeper wave history for swell-upstream buoys: Mooloolaba 2000-2014 (1h), Brisbane 1976-2011 (12h), Gold Coast 1987-2014 (6h), Tweed Heads 1995-2011 (1h). Excluded from `qld_ckan.wave.constants.BUOYS` because the pipeline assumes a 30-min axis and these have drifting minute offsets (e.g. 08:55, 14:56). Needs: a cadence parameter on the wave pipeline, snap-to-grid (floor + dedup) before reindex, and a join strategy mixing coarse history with the 30-min grid. Resource IDs at `coastal-data-system-waves-{slug}` on `data.qld.gov.au`. QLD's 1989-1992 DST window forces choosing fixed UTC+10 (`Etc/GMT-10`) or per-row DST.

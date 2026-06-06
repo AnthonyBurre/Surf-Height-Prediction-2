@@ -44,6 +44,9 @@ DEFAULT_BASELINE_STYLE = {
 }
 
 
+COLLAPSED_BASELINE_LABEL = "best baseline"
+
+
 def plot_horizon_winners(
     runs: pd.DataFrame,
     *,
@@ -51,6 +54,7 @@ def plot_horizon_winners(
     metric_col: str = "RMSE",
     label_col: str = "label",
     baseline_label: str | dict[str, dict] = "persistence",
+    collapse_baselines: bool = False,
     title: str | None = None,
     ax: Axes | None = None,
 ) -> Axes:
@@ -71,6 +75,13 @@ def plot_horizon_winners(
       drawn with its own style. Use this to overlay multiple reference
       lines (e.g. persistence solid + climatology dotted).
 
+    When ``collapse_baselines=True``, all baseline rows are merged into a
+    single per-horizon-minimum line labelled ``"best baseline"``; the
+    rendering style is taken from the *first* entry of ``baseline_label``
+    (so callers can still control the look). Useful when the individual
+    baselines have very different magnitudes and only the lower envelope
+    is interesting for setting the y-axis floor.
+
     All baseline labels are excluded from winner-finding.
 
     Args:
@@ -80,6 +91,8 @@ def plot_horizon_winners(
         label_col:   column with the line label (e.g. "wide / ensemble").
         baseline_label: single label or {label: style_kwargs} for the
             reference line(s); drawn dashed by default, ineligible to win.
+        collapse_baselines: collapse all baseline rows to one min-per-
+            horizon line; style taken from the first baseline_label entry.
         title: figure title.
         ax: existing axes to draw into; created if None.
 
@@ -124,14 +137,25 @@ def plot_horizon_winners(
     if ax is None:
         _, ax = plt.subplots(figsize=(11, 6.5))
 
-    # Baseline reference line(s) — averaged per horizon if multiple rows
-    # for the same baseline exist at one horizon.
-    for blabel, style in baseline_styles.items():
-        sub = baseline_rows[baseline_rows[label_col] == blabel]
-        if sub.empty:
-            continue
-        ref = sub.groupby(horizon_col)[metric_col].mean().reindex(horizons)
-        ax.plot(horizons, ref.values, label=f"{blabel} (no-model)", **style)
+    # Baseline reference line(s). When collapse_baselines is True, all
+    # baseline rows reduce to a single min-per-horizon envelope; style is
+    # borrowed from the first entry in baseline_label.
+    if collapse_baselines and not baseline_rows.empty:
+        style = next(iter(baseline_styles.values()))
+        ref = (
+            baseline_rows.groupby(horizon_col)[metric_col]
+            .min()
+            .reindex(horizons)
+        )
+        ax.plot(horizons, ref.values,
+                label=f"{COLLAPSED_BASELINE_LABEL} (no-model)", **style)
+    else:
+        for blabel, style in baseline_styles.items():
+            sub = baseline_rows[baseline_rows[label_col] == blabel]
+            if sub.empty:
+                continue
+            ref = sub.groupby(horizon_col)[metric_col].mean().reindex(horizons)
+            ax.plot(horizons, ref.values, label=f"{blabel} (no-model)", **style)
 
     # One trajectory per distinct winner, star-marking its winning horizon(s).
     for i, lab in enumerate(distinct):

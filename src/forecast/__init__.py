@@ -29,6 +29,7 @@ from .config import (
     HORIZON_STEPS,
     SAMPLING_FREQ_MINUTES,
     TARGET_COL,
+    hours_to_steps,
 )
 from .data import (
     SOURCE_TZ,
@@ -104,6 +105,7 @@ __all__ = [
     "HORIZON_STEPS",
     "SAMPLING_FREQ_MINUTES",
     "TARGET_COL",
+    "hours_to_steps",
     # data
     "SOURCE_TZ",
     "chronological_split",

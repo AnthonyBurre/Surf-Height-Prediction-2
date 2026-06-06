@@ -26,6 +26,8 @@ FIG_DIR = Path(__file__).parent / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
 TEST_START = "2023-01-01"
+HORIZON_H = 24
+HORIZON_STEPS = HORIZON_H * 2  # 30-min cadence
 
 # Plot colour per baseline — kept consistent across all panels.
 COLORS = {
@@ -37,7 +39,7 @@ COLORS = {
 def _build_baselines() -> list[tuple[str, object]]:
     return [
         ("Persistence",      fc.PersistenceForecaster()),
-        ("Climatology hour", fc.ClimatologyHourForecaster()),
+        ("Climatology hour", fc.ClimatologyHourForecaster(horizon_steps=HORIZON_STEPS)),
     ]
 
 
@@ -58,7 +60,7 @@ def main() -> None:
     train_mask = wave.index < ts
     test_mask  = wave.index >= ts
 
-    y_full  = fc.make_target(wave)
+    y_full  = fc.make_target(wave, horizon_steps=HORIZON_STEPS)
     y_train = y_full.loc[train_mask & y_full.notna()]
     y_test  = y_full.loc[test_mask  & y_full.notna()]
     X_train = wave.loc[y_train.index]
@@ -122,7 +124,7 @@ def main() -> None:
 
     fig.suptitle(
         "Baseline residuals on the 2023-01-01 → 2024-12-31 test window  "
-        "(Mooloolaba hsig_m, 12-h horizon)",
+        f"(Mooloolaba hsig_m, {HORIZON_H}-h horizon)",
         fontsize=12, y=1.002,
     )
     fig.tight_layout()

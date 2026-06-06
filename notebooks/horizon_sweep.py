@@ -224,7 +224,7 @@ def compute_baselines(wave_full: pd.DataFrame, horizon_h: int) -> dict[str, dict
     Both only need the Mooloolaba ``hsig_m`` column, so they're computed
     once per horizon (not once per combo). Returned skill is vs Persistence.
     """
-    horizon_steps = horizon_h * 2
+    horizon_steps = fc.hours_to_steps(horizon_h)
     y = fc.make_target(wave_full, horizon_steps=horizon_steps)
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos_w = _pinned_split(wave_full.index, ts)
@@ -268,7 +268,7 @@ def run_cell(
     log: bool,
 ) -> dict[str, dict[str, float]]:
     """Fit ridge/lasso/hgb-residual/ensemble at one horizon. Return per-model metrics."""
-    horizon_steps = horizon_h * 2  # 30-min cadence
+    horizon_steps = fc.hours_to_steps(horizon_h)
     y = fc.make_target(wave, horizon_steps=horizon_steps)
 
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
@@ -410,7 +410,7 @@ def run_seq_cell(
     TEST_START split exactly like run_cell so seq numbers slot into the
     same plot rows.
     """
-    horizon_steps = horizon_h * 2
+    horizon_steps = fc.hours_to_steps(horizon_h)
     y = fc.make_target(wave, horizon_steps=horizon_steps)
 
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
@@ -557,11 +557,13 @@ def _climatology_rows(horizons: list[int]) -> pd.DataFrame:
 def save_horizon_winners_chart(runs: pd.DataFrame) -> None:
     """Render the per-horizon-winners chart to ``figures/horizon_sweep.png``.
 
-    Drops ensemble entries before winner-finding so the chart compares
-    single-model performances directly. Both non-ML baselines (persistence
-    and climatology-hour) are overlaid for context: persistence in black
-    dashed (the project's headline reference), climatology-hour dotted
-    gray (the "regress to the diurnal mean" floor).
+    Single RMSE-vs-horizon panel focused on the architecture × dataset
+    story: for each horizon the lowest-RMSE (non-ensemble) model wins,
+    every distinct winner gets its full trajectory across all horizons,
+    and stars mark its winning horizon(s). The two no-model baselines
+    (persistence + climatology-hour) are collapsed via viz's
+    ``collapse_baselines`` and drawn as a faint gray backdrop — the
+    crossover narrative lives in the README, not the chart.
     """
     horizons = sorted(runs["horizon_h"].unique())
 
@@ -583,17 +585,24 @@ def save_horizon_winners_chart(runs: pd.DataFrame) -> None:
         win = sub.loc[sub["RMSE"].idxmin()]
         print(f"  h={h:>3}h  {win['combo']:>10}/{win['arch']:<10}  RMSE {win['RMSE']:.4f}")
 
+    # Baselines collapsed to one backdrop line — light gray, thinner, no
+    # marker — so the eye lands on the model trajectories first.
+    baseline_style = {
+        "persistence":      {"linestyle": "--", "color": "#999999",
+                             "alpha": 0.45, "linewidth": 1.2, "marker": ""},
+        "climatology hour": {"linestyle": "--", "color": "#999999",
+                             "alpha": 0.45, "linewidth": 1.2, "marker": ""},
+    }
+    title = (
+        "Mooloolaba significant wave height — best model per forecast horizon\n"
+        "pinned 2023-01-01 → 2024-12-31 test window  ·  ★ marks the lowest-RMSE model at each horizon"
+    )
+
     fig, ax = plt.subplots(figsize=(11, 6.5))
     plot_horizon_winners(
         runs, horizon_col="horizon_h", metric_col="RMSE", label_col="label",
-        baseline_label={
-            "persistence":      {"linestyle": "--", "color": "#000000", "alpha": 0.8},
-            "climatology hour": {"linestyle": ":",  "color": "#555555", "alpha": 0.8},
-        },
-        title=("Best (non-ensemble) models per forecast horizon  —  pinned "
-               "2023-01-01 → 2024-12-31 test window\n"
-               "★ marks the lowest-RMSE model at each horizon"),
-        ax=ax,
+        baseline_label=baseline_style, collapse_baselines=True,
+        title=title, ax=ax,
     )
     ax.set_xlabel("Forecast horizon (hours)")
     ax.set_ylabel("RMSE (m)")
