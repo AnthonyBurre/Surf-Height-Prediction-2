@@ -199,7 +199,7 @@ def make_model(model: str, seq_len: int, hidden: int, num_layers: int,
                epochs: int, weight_decay: float, rnn_dropout: float):
     common = dict(
         seq_len=seq_len, epochs=epochs,
-        batch_size=BATCH_SIZE, lr=LR, seed=SEED, device="cpu", verbose=False,
+        batch_size=BATCH_SIZE, lr=LR, seed=SEED, device=fc.auto_device(), verbose=False,
         scaler=SCALER, weight_decay=weight_decay,
     )
     if model == "tcn":
@@ -241,7 +241,7 @@ def run_one(d: dict, feature_set: str, model: str, seq_len: int, hidden: int,
             "feature_set": feature_set,
             "feature_mode": FEATURE_MODE, "seq_len": seq_len, "hidden": hidden,
             "num_layers": num_layers, "epochs": epochs, "lr": LR,
-            "batch_size": BATCH_SIZE, "scaler": SCALER, "device": "cpu",
+            "batch_size": BATCH_SIZE, "scaler": SCALER, "device": fc.auto_device(),
             "imputation": "mean",
             "weight_decay": weight_decay, "rnn_dropout": rnn_dropout,
             "elapsed_min": round(elapsed / 60, 2), "sweep": True,

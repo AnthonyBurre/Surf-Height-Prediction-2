@@ -2,10 +2,11 @@
 
 Run:  ./.venv/bin/python notebooks/wave_eda.py
 
-Saves eight PNGs to notebooks/figures/ (all prefixed ``wave_``):
+Saves nine PNGs to notebooks/figures/ (all prefixed ``wave_``):
   wave_coverage.png                  — % valid hsig_m per buoy x year
   wave_column_coverage.png           — % valid per channel per buoy (all years pooled)
   wave_distributions.png             — violins (full history) + annual mean lines
+  wave_target_yearly_stats.png       — Mooloolaba target: per-year boxplot + summary stat lines
   wave_seasonality.png               — monthly climatology + peak swell direction rose
   wave_timeseries.png                — Mooloolaba 2020 trace: hsig_m, tp_s, hmax_m
   wave_autocorrelation.png           — ACF (72h window, 12h horizon marked)
@@ -183,6 +184,93 @@ def plot_distributions(buoys: dict[str, pd.DataFrame]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Figure 2b — Target (Mooloolaba hsig_m) statistics by year
+# --------------------------------------------------------------------------- #
+def plot_target_yearly_stats(mool: pd.DataFrame) -> None:
+    """Per-year hsig_m stats for the Mooloolaba target — boxplot + summary lines.
+
+    The annual-mean panel in ``plot_distributions`` only shows the central
+    tendency across buoys; here we focus on the *target* and expose the full
+    distribution shape per year (IQR, p95/p99, max) so storm-season variability
+    is visible. Years with <50 % valid hsig_m are dropped to avoid misleading
+    partial-year stats.
+    """
+    hs = mool["hsig_m"]
+    grouped = hs.groupby(mool.index.year)
+    valid_frac = grouped.apply(lambda s: s.notna().mean())
+    years = valid_frac[valid_frac > 0.5].index.tolist()
+
+    stats = pd.DataFrame({
+        "min":   [grouped.get_group(y).min()           for y in years],
+        "p25":   [grouped.get_group(y).quantile(0.25)  for y in years],
+        "mean":  [grouped.get_group(y).mean()          for y in years],
+        "p50":   [grouped.get_group(y).quantile(0.50)  for y in years],
+        "p75":   [grouped.get_group(y).quantile(0.75)  for y in years],
+        "p95":   [grouped.get_group(y).quantile(0.95)  for y in years],
+        "p99":   [grouped.get_group(y).quantile(0.99)  for y in years],
+        "max":   [grouped.get_group(y).max()           for y in years],
+        "count": [int(grouped.get_group(y).notna().sum()) for y in years],
+    }, index=years)
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+    # Left: per-year boxplot showing median, IQR, whiskers, outliers
+    ax = axes[0]
+    data = [grouped.get_group(y).dropna().to_numpy() for y in years]
+    bp = ax.boxplot(
+        data, positions=years, widths=0.65,
+        showfliers=True, flierprops={"marker": ".", "markersize": 2, "alpha": 0.25},
+        patch_artist=True, medianprops={"color": "black", "linewidth": 1.4},
+    )
+    for patch in bp["boxes"]:
+        patch.set_facecolor(COLORS["mooloolaba"])
+        patch.set_alpha(0.55)
+    ax.set(
+        xlabel="Year", ylabel="hsig_m (m)",
+        title="Per-year distribution — Mooloolaba hsig_m",
+    )
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(y) for y in years], rotation=0)
+
+    # Right: layered summary statistics — IQR band, mean/median, tail percentiles, max
+    ax = axes[1]
+    ax.fill_between(years, stats["p25"], stats["p75"],
+                    alpha=0.20, color=COLORS["mooloolaba"], label="IQR (p25–p75)")
+    ax.plot(years, stats["mean"], marker="o", color=COLORS["mooloolaba"],
+            linewidth=2.0, label="mean")
+    ax.plot(years, stats["p50"],  marker="s", color=COLORS["mooloolaba"],
+            linewidth=1.3, linestyle="--", alpha=0.75, label="median")
+    ax.plot(years, stats["p95"],  marker="^", color="#ff7f0e", linewidth=1.4, label="p95")
+    ax.plot(years, stats["p99"],  marker="^", color="#d62728", linewidth=1.4, label="p99")
+    ax.plot(years, stats["max"],  marker="*", color="black", linewidth=0.9,
+            linestyle=":", markersize=11, label="max")
+    ax.set(
+        xlabel="Year", ylabel="hsig_m (m)",
+        title="Yearly summary statistics — Mooloolaba hsig_m",
+    )
+    ax.legend(fontsize=8, loc="upper left", ncols=2)
+    ax.grid(alpha=0.3)
+    ax.set_xticks(years)
+    ax.set_xticklabels([str(y) for y in years], rotation=0)
+
+    plt.tight_layout()
+    out = FIG_DIR / "wave_target_yearly_stats.png"
+    plt.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"Saved {out.name}")
+
+    print("\n  Per-year stats (Mooloolaba hsig_m, m):")
+    print(stats.round(2).to_string())
+    calm  = stats["mean"].idxmin()
+    stormy = stats["mean"].idxmax()
+    tail  = stats["max"].idxmax()
+    print(f"\n  Calmest year   : {calm}  (mean {stats.loc[calm, 'mean']:.2f} m)")
+    print(f"  Stormiest year : {stormy}  (mean {stats.loc[stormy, 'mean']:.2f} m)")
+    print(f"  Largest peak   : {tail}  (max {stats.loc[tail, 'max']:.2f} m)")
+
+
+# --------------------------------------------------------------------------- #
 # Figure 3 — Seasonal climatology + peak direction roses
 # --------------------------------------------------------------------------- #
 def plot_seasonality(buoys: dict[str, pd.DataFrame]) -> None:
@@ -351,6 +439,7 @@ def main() -> None:
     print("\n--- Figure 1: coverage ---");                plot_coverage(buoys)
     print("\n--- Figure 1b: per-column coverage ---");    plot_column_coverage(buoys)
     print("\n--- Figure 2: distributions & trends ---");  plot_distributions(buoys)
+    print("\n--- Figure 2b: target yearly stats ---");     plot_target_yearly_stats(mool)
     print("\n--- Figure 3: seasonality & direction ---"); plot_seasonality(buoys)
     print("\n--- Figure 4: time series (2020) ---");      plot_timeseries(mool)
     print("\n--- Figure 5: autocorrelation ---");         plot_autocorrelation(mool)

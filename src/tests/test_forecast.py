@@ -8,7 +8,6 @@ from forecast import (
     PersistenceForecaster,
     Preprocessor,
     SOURCE_TZ,
-    SeasonalNaiveForecaster,
     add_lag_features,
     add_momentum,
     add_neighbour_features,
@@ -290,21 +289,6 @@ def test_persistence_perfect_on_constant_series():
     preds = PersistenceForecaster().fit(df, y).predict(df)
     mask = ~y.isna()
     np.testing.assert_allclose(preds[mask], y[mask])
-
-
-def test_seasonal_naive_looks_up_same_hour_prior_period(synthetic_df):
-    df = synthetic_df(200)
-    y = make_target(df, horizon_steps=24)
-    preds = SeasonalNaiveForecaster(period_steps=48, horizon_steps=24).fit(df, y).predict(df)
-    # lookback = 48 - 24 = 24 steps
-    assert preds[50] == pytest.approx(df["hsig_m"].iloc[50 - 24])
-    # first lookback rows are NaN
-    assert np.isnan(preds[:24]).all()
-
-
-def test_seasonal_naive_rejects_period_le_horizon():
-    with pytest.raises(ValueError, match="period_steps"):
-        SeasonalNaiveForecaster(period_steps=24, horizon_steps=24)
 
 
 def test_climatology_hour_predicts_training_hourly_mean():

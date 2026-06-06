@@ -21,7 +21,6 @@ Example
 from .baselines import (
     ClimatologyHourForecaster,
     PersistenceForecaster,
-    SeasonalNaiveForecaster,
 )
 from .config import (
     CIRCULAR_COLS,
@@ -30,6 +29,7 @@ from .config import (
     HORIZON_STEPS,
     SAMPLING_FREQ_MINUTES,
     TARGET_COL,
+    hours_to_steps,
 )
 from .data import (
     SOURCE_TZ,
@@ -53,8 +53,13 @@ from .preprocess import (
     scale_features,
 )
 from .experiments import (
+    best_metric,
+    best_run,
     compose_run_name,
     evaluate_and_log,
+    find_runs,
+    latest_metric,
+    latest_run,
     log_run,
     read_log,
     recent_runs,
@@ -100,6 +105,7 @@ __all__ = [
     "HORIZON_STEPS",
     "SAMPLING_FREQ_MINUTES",
     "TARGET_COL",
+    "hours_to_steps",
     # data
     "SOURCE_TZ",
     "chronological_split",
@@ -122,7 +128,6 @@ __all__ = [
     # baselines
     "ClimatologyHourForecaster",
     "PersistenceForecaster",
-    "SeasonalNaiveForecaster",
     # neural (lazy)
     "GRUForecaster",
     "LSTMForecaster",
@@ -145,8 +150,13 @@ __all__ = [
     "mean_impute",
     "scale_features",
     # experiments
+    "best_metric",
+    "best_run",
     "compose_run_name",
     "evaluate_and_log",
+    "find_runs",
+    "latest_metric",
+    "latest_run",
     "log_run",
     "read_log",
     "recent_runs",

@@ -201,6 +201,173 @@ def recent_runs(
     return log[log["name"].str.startswith(prefix)].sort_values("timestamp").tail(n)
 
 
+# ---------------------------------------------------------------------------
+# Lookups — filter the JSONL log by common run attributes
+# ---------------------------------------------------------------------------
+
+
+def find_runs(
+    *,
+    name: str | None = None,
+    name_prefix: str | None = None,
+    model_class: str | None = None,
+    test_start: str | None = None,
+    test_end: str | None = None,
+    path: str | Path = DEFAULT_LOG,
+    **extra_filters: Any,
+) -> pd.DataFrame:
+    """Filter the log by common run attributes; return matching rows.
+
+    All filters are AND-combined. The returned DataFrame is sorted by
+    timestamp ascending — so the most recent matching row is the last one
+    (use :func:`latest_run` for that lookup directly).
+
+    Top-level filters:
+
+    - ``name``         — exact match on the run name.
+    - ``name_prefix``  — ``name.startswith(...)``.
+    - ``model_class``  — exact match (e.g. ``"TCNForecaster"``).
+    - ``test_start``   — prefix match on ``test.start`` so date strings
+                          (e.g. ``"2023-01-01"``) match full ISO timestamps
+                          (``"2023-01-01T09:30:00+10:00"``).
+    - ``test_end``     — prefix match on ``test.end``.
+
+    Any other keyword is treated as an ``extra`` field filter — the row's
+    ``extra[key]`` must equal the supplied value. Rows missing the key are
+    excluded. This is how you filter on, e.g., ``horizon_h=12`` or
+    ``feature_set="narrow"`` without hardcoding those keys here.
+
+    Returns an empty DataFrame if the log is empty.
+    """
+    log = read_log(path)
+    if log.empty or "name" not in log.columns:
+        return log
+
+    mask = pd.Series(True, index=log.index)
+    if name is not None:
+        mask &= log["name"] == name
+    if name_prefix is not None:
+        mask &= log["name"].str.startswith(name_prefix)
+    if model_class is not None:
+        mask &= log["model_class"] == model_class
+    if test_start is not None:
+        ts = log["test"].apply(lambda d: d.get("start") if isinstance(d, dict) else None)
+        mask &= ts.fillna("").str.startswith(test_start)
+    if test_end is not None:
+        te = log["test"].apply(lambda d: d.get("end") if isinstance(d, dict) else None)
+        mask &= te.fillna("").str.startswith(test_end)
+    for key, expected in extra_filters.items():
+        vals = log["extra"].apply(lambda d, k=key: d.get(k) if isinstance(d, dict) else None)
+        mask &= vals == expected
+
+    return log[mask].sort_values("timestamp")
+
+
+def latest_run(
+    *,
+    path: str | Path = DEFAULT_LOG,
+    **filters: Any,
+) -> pd.Series | None:
+    """Most recent run matching every filter, or ``None`` if no match.
+
+    Filters are passed through to :func:`find_runs`. Returns a single-row
+    pandas Series with the same columns as ``read_log()`` rows.
+    """
+    hits = find_runs(path=path, **filters)
+    if hits.empty:
+        return None
+    return hits.iloc[-1]
+
+
+def latest_metric(
+    metric: str,
+    *,
+    path: str | Path = DEFAULT_LOG,
+    **filters: Any,
+) -> float | None:
+    """Convenience: pull one metric value from the most recent matching run.
+
+    Example
+    -------
+    >>> # RMSE of the most recent TCN run on the 2023-2024 test window at h=12
+    >>> latest_metric(
+    ...     "RMSE",
+    ...     model_class="TCNForecaster",
+    ...     test_start="2023-01-01",
+    ...     test_end="2024-12-31",
+    ...     horizon_h=12,
+    ... )
+    """
+    row = latest_run(path=path, **filters)
+    if row is None:
+        return None
+    metrics = row.get("metrics")
+    if not isinstance(metrics, dict) or metric not in metrics:
+        return None
+    val = metrics[metric]
+    return float(val) if val is not None else None
+
+
+def best_run(
+    metric: str,
+    *,
+    maximise: bool = False,
+    path: str | Path = DEFAULT_LOG,
+    **filters: Any,
+) -> pd.Series | None:
+    """Run with the best ``metric`` value matching every filter.
+
+    ``maximise=False`` (default) picks the minimum — right for error
+    metrics like RMSE/MAE. Pass ``maximise=True`` for "higher is better"
+    metrics like SkillVsBaseline or R². Rows whose ``metrics[metric]``
+    is missing or null are excluded. Filters are passed through to
+    :func:`find_runs`; ties resolve to the row :func:`pandas.idxmin`
+    /``idxmax`` returns first (effectively the earliest logged one).
+    Returns ``None`` if no row matches or no matching row has the metric.
+
+    Example
+    -------
+    >>> # Lowest-RMSE TCN run anywhere in the log at h=12 on the
+    >>> # 2023-2024 test window — regardless of when it was logged.
+    >>> best_run(
+    ...     "RMSE",
+    ...     model_class="TCNForecaster",
+    ...     test_start="2023-01-01",
+    ...     test_end="2024-12-31",
+    ...     horizon_h=12,
+    ... )
+    """
+    hits = find_runs(path=path, **filters)
+    if hits.empty:
+        return None
+    vals = hits["metrics"].apply(
+        lambda d: d.get(metric) if isinstance(d, dict) else None
+    )
+    vals = pd.to_numeric(vals, errors="coerce")
+    if vals.notna().sum() == 0:
+        return None
+    idx = vals.idxmax() if maximise else vals.idxmin()
+    return hits.loc[idx]
+
+
+def best_metric(
+    metric: str,
+    *,
+    maximise: bool = False,
+    path: str | Path = DEFAULT_LOG,
+    **filters: Any,
+) -> float | None:
+    """Convenience: pull ``metric`` from the :func:`best_run` match."""
+    row = best_run(metric, maximise=maximise, path=path, **filters)
+    if row is None:
+        return None
+    metrics = row.get("metrics")
+    if not isinstance(metrics, dict):
+        return None
+    val = metrics.get(metric)
+    return float(val) if val is not None else None
+
+
 def wind_tag(stations: list[str]) -> str:
     """Compact label from a list of station slugs (e.g. ``mountain-creek`` → ``mc``)."""
     return "+".join("".join(part[0] for part in s.split("-")) for s in stations)
