@@ -1,7 +1,9 @@
-"""12-hour-ahead significant wave height forecasting.
+"""Significant wave height (``hsig_m``) forecasting across 6-72h horizons.
 
 Top-level exports cover the common workflow: load data, build target,
-split, engineer features, fit baselines or regressors, score.
+split, engineer features, fit baselines or regressors, score, and log.
+``make_target`` defaults to the 12h horizon, but every step accepts a
+``horizon_steps`` override (see ``forecast.config``).
 
 Sequence-model forecasters (``SimpleRNNForecaster``, ``GRUForecaster``,
 ``LSTMForecaster``, ``TCNForecaster``) plus ``auto_device`` require

@@ -11,6 +11,4 @@ Venv is at `./.venv` (managed by uv). Use `./.venv/bin/python` and `./.venv/bin/
 
 - **Rolling features lag-shift by 1 step** in `features.add_rolling_features` — past-only by convention (see its docstring). Enforced by `test_add_rolling_features_are_shifted_by_one`.
 
-- **Skill score is always measured vs. `PersistenceForecaster`.**; `ClimatologyHourForecaster` exists as a diagnostic floor and overtakes persistence around h≈24h.
-
 - **Experiment results go in `experiments.jsonl` at the repo root** — Use `forecast.evaluate_and_log(...)` (drop-in replacement for `evaluate`) or `forecast.log_run(result, ...)` for results computed outside the harness; `forecast.read_log()` returns the file as a DataFrame in one line.

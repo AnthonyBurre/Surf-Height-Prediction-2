@@ -271,7 +271,7 @@ Run tests after changes:
 - **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-experiment result charts that consume `forecast.find_runs` output.
 - **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, and an evaluation harness. See *Available forecasters* below for the model list.
 
-Experiment scripts in `notebooks/` run on top of these packages.
+Experiment scripts in `notebooks/` run on top of these packages. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full source tree and a per-module breakdown.
 
 ### Running the pipeline
 
