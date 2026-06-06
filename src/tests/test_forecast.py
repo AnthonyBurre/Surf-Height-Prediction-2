@@ -8,7 +8,6 @@ from forecast import (
     PersistenceForecaster,
     Preprocessor,
     SOURCE_TZ,
-    SeasonalNaiveForecaster,
     add_lag_features,
     add_momentum,
     add_neighbour_features,
@@ -292,21 +291,6 @@ def test_persistence_perfect_on_constant_series():
     np.testing.assert_allclose(preds[mask], y[mask])
 
 
-def test_seasonal_naive_looks_up_same_hour_prior_period(synthetic_df):
-    df = synthetic_df(200)
-    y = make_target(df, horizon_steps=24)
-    preds = SeasonalNaiveForecaster(period_steps=48, horizon_steps=24).fit(df, y).predict(df)
-    # lookback = 48 - 24 = 24 steps
-    assert preds[50] == pytest.approx(df["hsig_m"].iloc[50 - 24])
-    # first lookback rows are NaN
-    assert np.isnan(preds[:24]).all()
-
-
-def test_seasonal_naive_rejects_period_le_horizon():
-    with pytest.raises(ValueError, match="period_steps"):
-        SeasonalNaiveForecaster(period_steps=24, horizon_steps=24)
-
-
 def test_climatology_hour_predicts_training_hourly_mean():
     # Build a series whose hsig_m depends only on hour-of-day.
     n = 48 * 10  # 10 days of 30-min data
@@ -407,6 +391,52 @@ def test_compare_sorts_by_rmse(synthetic_df):
     r2 = evaluate(ClimatologyHourForecaster(horizon_steps=4), Xtr, ytr, Xte, yte, name="b")
     table = compare([r1, r2])
     assert list(table.index) == sorted(table.index, key=lambda m: table.loc[m, "RMSE"])
+
+
+# ---------------------------------------------------------------------------
+# Documented-baseline anchor
+# ---------------------------------------------------------------------------
+
+
+def test_persistence_baseline_matches_documented_values():
+    """Lock the canonical persistence baseline to the current evaluator.
+
+    The README's headline table and `experiments.jsonl` quote persistence
+    metrics for the standard config (mooloolaba primary, +12h horizon,
+    80/20 chronological split, year_max=2024, no overlap-restriction). This
+    test asserts those numbers reproduce from the current code path so
+    that any change to the evaluator, metric definitions, target horizon,
+    split, or data file is caught the moment it diverges from the doc.
+
+    If this test fails:
+      - Intentional change? Update the expected values here AND the
+        README's headline-table row in the same commit.
+      - Unintentional? You've drifted from what the project documents.
+
+    Skipped when the data CSV isn't present (e.g. CI without bulk data).
+    """
+    from pathlib import Path
+
+    import forecast as fc
+
+    data_dir = Path(fc.__file__).parents[2] / "data"
+    if not list(data_dir.glob("mooloolaba_wave_data_*.csv")):
+        pytest.skip("mooloolaba wave CSV not present; baseline anchor needs it.")
+
+    wave = fc.restrict_to_years(fc.load_data(buoy="mooloolaba"), None, 2024)
+    y = fc.make_target(wave)
+    X_p = wave[["hsig_m"]]
+    X_tr, X_te, y_tr, y_te = fc.chronological_split(X_p, y)
+    metrics = fc.evaluate(
+        fc.PersistenceForecaster(), X_tr, y_tr, X_te, y_te
+    ).metrics
+
+    # Locked 2026-05-21 against the current data file + evaluator. A 3 mm
+    # tolerance absorbs minor data refreshes (single-year QC updates) but
+    # would still catch the MAE-vs-RMSE confusion that prompted this test
+    # (gap is ~133 mm).
+    assert metrics["MAE"] == pytest.approx(0.2660, abs=0.003)
+    assert metrics["RMSE"] == pytest.approx(0.3996, abs=0.003)
 
 
 # ---------------------------------------------------------------------------
