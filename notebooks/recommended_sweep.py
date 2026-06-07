@@ -32,7 +32,7 @@ from sklearn.linear_model import Ridge
 
 import forecast as fc
 from forecast import ablation as ab
-from forecast.metrics import summarise
+from forecast import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -95,7 +95,7 @@ def load_recommended_sets(threshold: float = 0.005) -> dict[tuple[str, int], lis
 
 
 def _ridge_cell(sources, h, stations, y_tr, y_te, pp, X_p_idx, extra_base):
-    X = ab.build_engineered_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="engineered")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
@@ -104,7 +104,7 @@ def _ridge_cell(sources, h, stations, y_tr, y_te, pp, X_p_idx, extra_base):
     result = fc.evaluate_and_log(
         Ridge(**RIDGE_KW), X_tr_imp, y_tr, X_te_imp, y_te,
         name=f"{RUN_PREFIX}_ridge_h{h}h", baseline_preds=pp,
-        data_sources=[ab.PRIMARY_BUOY] + stations,
+        data_sources=[fc.PRIMARY_BUOY] + stations,
         extra={**extra_base, "family": "ridge", "direction": "recommended",
                "station_set": stations, "n_features": int(X_tr_imp.shape[1])},
     )
@@ -114,7 +114,7 @@ def _ridge_cell(sources, h, stations, y_tr, y_te, pp, X_p_idx, extra_base):
 def _hgb_cell(sources, h, stations, y_tr, y_te, pp,
               wave_level_tr, wave_level_te, extra_base):
     """HGB on persistence residual, matches feature_ablation."""
-    X = ab.build_engineered_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="engineered")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
@@ -130,7 +130,7 @@ def _hgb_cell(sources, h, stations, y_tr, y_te, pp,
     fc.log_run(
         fc.EvaluationResult(name=f"{RUN_PREFIX}_hgb_h{h}h", metrics=metrics,
                             predictions=preds, model=model),
-        data_sources=[ab.PRIMARY_BUOY] + stations,
+        data_sources=[fc.PRIMARY_BUOY] + stations,
         train_index=X_tr.index, test_index=X_te.index,
         n_features=int(X_tr_raw.shape[1]),
         extra={**extra_base, "family": "hgb", "direction": "recommended",
@@ -141,7 +141,7 @@ def _hgb_cell(sources, h, stations, y_tr, y_te, pp,
 
 
 def _gru_cell(sources, h, stations, y_tr, y_te, pp, extra_base):
-    X = ab.build_seq_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="raw")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
@@ -163,7 +163,7 @@ def _gru_cell(sources, h, stations, y_tr, y_te, pp, extra_base):
     fc.log_run(
         fc.EvaluationResult(name=f"{RUN_PREFIX}_gru_h{h}h", metrics=metrics,
                             predictions=preds, model=model),
-        data_sources=[ab.PRIMARY_BUOY] + stations,
+        data_sources=[fc.PRIMARY_BUOY] + stations,
         train_index=X_tr.index, test_index=X_te.index,
         n_features=int(X_tr_imp.shape[1]),
         extra={**extra_base, "family": "gru", "direction": "recommended",
@@ -182,7 +182,7 @@ def _gru_cell(sources, h, stations, y_tr, y_te, pp, extra_base):
 def main() -> None:
     t0 = time.time()
     print("Loading sources …")
-    sources = ab.load_all_sources()
+    sources = fc.load_all_sources()
     print(f"  fixed window: {sources.window_start} → {sources.window_end}")
     print(f"  wave rows: {len(sources.wave):,}")
 
@@ -239,7 +239,7 @@ def main() -> None:
         fc.log_run(
             fc.EvaluationResult(name=f"{RUN_PREFIX}_ensemble_h{h}h",
                                 metrics=ens_metrics, predictions=ens_preds, model=None),
-            data_sources=[ab.PRIMARY_BUOY] + sorted({s for stations in
+            data_sources=[fc.PRIMARY_BUOY] + sorted({s for stations in
                           [recs.get((f, h), []) for f in ("ridge","hgb","gru")] for s in stations}),
             train_index=y_tr.index, test_index=y_te.index, n_features=None,
             model_class="NanMeanEnsemble",

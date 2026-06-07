@@ -53,12 +53,8 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Lasso, Ridge
 
-# Notebooks share helpers via sys.path-relative imports.
-sys.path.insert(0, str(Path(__file__).parent))
-from seq_playground import build_features as build_seq_features_frame  # noqa: E402
-
 import forecast as fc
-from forecast.metrics import summarise
+from forecast import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -173,22 +169,11 @@ SEQ_SCALER = "robust"
 
 def build_combo(combo: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """Return (wave_df, X_features, source_labels) for a combo."""
-    wave = fc.restrict_to_years(
-        fc.load_data(buoy="mooloolaba"), combo["year_min"], combo["year_max"],
+    wave, neighbours, wind = fc.load_sources(
+        neighbours=combo["neighbours"], wind_stations=combo["wind"],
+        year_min=combo["year_min"], year_max=combo["year_max"],
     )
-    neighbours = fc.load_neighbours(wave.index, combo["neighbours"])
-    wind = fc.load_wind(wave.index, combo["wind"])
-    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
-
-    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
-    primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-    X = fc.build_buoy_features(primary_only)
-    if neighbour_cols:
-        X = fc.add_neighbour_features(X, merged, neighbour_cols)
-    if wind is not None:
-        wind_cols = [c for c in wind.columns if not c.endswith("_deg")]
-        X = fc.add_neighbour_features(X, wind, wind_cols)
-
+    X = fc.build_design(wave, neighbours, wind, kind="engineered")
     sources = ["mooloolaba"] + combo["neighbours"] + combo["wind"]
     return wave, X, sources
 
@@ -198,18 +183,13 @@ def build_seq_combo(combo: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]
 
     Sequence forecasters window their own input over time and expect raw
     channels + sin/cos direction columns, NOT the lag/rolling feature matrix
-    used by the linear/tree models. Mirrors seq_playground's data path so
-    the runs here are directly comparable to the seq sweep tables.
+    used by the linear/tree models.
     """
-    wave = fc.restrict_to_years(
-        fc.load_data(buoy="mooloolaba"), combo["year_min"], combo["year_max"],
+    wave, neighbours, wind = fc.load_sources(
+        neighbours=combo["neighbours"], wind_stations=combo["wind"],
+        year_min=combo["year_min"], year_max=combo["year_max"],
     )
-    neighbours = fc.load_neighbours(wave.index, combo["neighbours"])
-    wind = fc.load_wind(wave.index, combo["wind"])
-    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
-
-    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
-    X = build_seq_features_frame(merged, neighbour_cols, wind, "raw")
+    X = fc.build_design(wave, neighbours, wind, kind="raw")
     sources = ["mooloolaba"] + combo["neighbours"] + combo["wind"]
     return wave, X, sources
 

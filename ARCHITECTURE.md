@@ -16,15 +16,15 @@ Surf-Height-Prediction-2/
 │   │       ├── downloader.py
 │   │       └── pipeline.py
 │   ├── forecast/               # modelling package
-│   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
-│   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
-│   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
-│   │   ├── baselines.py        # Persistence, ClimatologyHour forecasters
-│   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
-│   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
+│   │   ├── config.py           # HORIZON_STEPS/HOURS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS, hours_to_steps
+│   │   ├── data.py             # load_data/load_neighbours/load_wind + load_sources (load→clip in one call), restrict_to_years/overlap, make_target, chronological_split, SourceBundle/load_all_sources/compute_fixed_window (fixed-window comparison studies), STATIONS_WAVE/WIND/ALL_STATIONS, PRIMARY_BUOY
+│   │   ├── features.py         # FeatureConfig, encode_circular, add_lag/rolling/momentum, build_buoy/seq_features, assemble_inputs, add_neighbour_features, build_design (canonical "sources + kind → X" builder)
 │   │   ├── preprocess.py       # drop_sparse_columns, mean_impute, scale_features + Preprocessor (fit/transform/save/load)
-│   │   ├── evaluate.py         # fit / predict / score harness + compare helper
-│   │   └── experiments.py      # append-only JSONL run log + read_log reader
+│   │   ├── baselines.py        # Forecaster protocol (the fit/predict contract) + Persistence, ClimatologyHour forecasters
+│   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters + auto_device (PyTorch, lazy-imported)
+│   │   ├── scoring.py          # metrics (mae/rmse/bias/skill_score/summarise) + evaluate/compare harness + EvaluationResult
+│   │   ├── runlog.py           # experiments.jsonl: log_run/evaluate_and_log/read_log (store) · find_runs/best_run/latest_* (query) · wind_tag/compose_run_name (naming)
+│   │   └── ablation.py         # recommended_set — the ablation keep-if-helps-or-hurts selection rule (the sweep itself uses core load_all_sources + build_design)
 │   ├── viz/                    # plotting package — split by pipeline stage
 │   │   ├── timeseries.py       # SHARED:           plot_series, plot_multi_source, autocorrelation_curve
 │   │   ├── eda.py              # POST-DOWNLOAD:    feature × horizon, cross-source heatmaps

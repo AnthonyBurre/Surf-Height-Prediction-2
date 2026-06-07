@@ -5,10 +5,25 @@ thing that also knows the autocorrelation structure of the series.
 Persistence is that thing for any process with strong short-horizon
 autocorrelation; skill-score-vs-persistence is the honest metric.
 """
+from typing import Protocol, Self
+
 import numpy as np
 import pandas as pd
 
 from .config import HORIZON_STEPS, SAMPLING_FREQ_MINUTES, TARGET_COL
+
+
+class Forecaster(Protocol):
+    """The fit/predict contract every model in this package satisfies.
+
+    sklearn estimators, the baselines below, and the sequence models in
+    ``neural`` all duck-type to this — which is what lets the ``scoring``
+    harness accept any of them. Defined here, alongside the simplest
+    concrete models, rather than in the harness that merely consumes it.
+    """
+
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> Self: ...
+    def predict(self, X: pd.DataFrame) -> np.ndarray: ...
 
 
 class PersistenceForecaster:

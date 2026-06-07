@@ -34,19 +34,32 @@ from .config import (
     hours_to_steps,
 )
 from .data import (
+    ALL_STATIONS,
+    PRIMARY_BUOY,
     SOURCE_TZ,
+    STATIONS_WAVE,
+    STATIONS_WIND,
+    SourceBundle,
     chronological_split,
+    compute_fixed_window,
+    load_all_sources,
     load_data,
     load_neighbours,
+    load_sources,
     load_wind,
     make_target,
     restrict_to_overlap,
     restrict_to_years,
 )
-from .evaluate import (
+from .scoring import (
     EvaluationResult,
+    bias,
     compare,
     evaluate,
+    mae,
+    rmse,
+    skill_score,
+    summarise,
 )
 from .preprocess import (
     Preprocessor,
@@ -54,7 +67,7 @@ from .preprocess import (
     mean_impute,
     scale_features,
 )
-from .experiments import (
+from .runlog import (
     best_metric,
     best_run,
     compose_run_name,
@@ -75,10 +88,10 @@ from .features import (
     add_rolling_features,
     assemble_inputs,
     build_buoy_features,
+    build_design,
     build_seq_features,
     encode_circular,
 )
-from .metrics import bias, mae, rmse, skill_score, summarise
 
 # Names defined in .neural that should be lazy-loaded so plain
 # ``import forecast`` doesn't drag torch in. ``auto_device`` belongs
@@ -113,10 +126,19 @@ __all__ = [
     "chronological_split",
     "load_data",
     "load_neighbours",
+    "load_sources",
     "load_wind",
     "make_target",
     "restrict_to_overlap",
     "restrict_to_years",
+    # data — source bundles for comparison studies
+    "ALL_STATIONS",
+    "PRIMARY_BUOY",
+    "STATIONS_WAVE",
+    "STATIONS_WIND",
+    "SourceBundle",
+    "compute_fixed_window",
+    "load_all_sources",
     # features
     "FeatureConfig",
     "add_lag_features",
@@ -125,6 +147,7 @@ __all__ = [
     "add_rolling_features",
     "assemble_inputs",
     "build_buoy_features",
+    "build_design",
     "build_seq_features",
     "encode_circular",
     # baselines
@@ -136,13 +159,13 @@ __all__ = [
     "SimpleRNNForecaster",
     "TCNForecaster",
     "auto_device",
-    # metrics
+    # scoring — metrics
     "bias",
     "mae",
     "rmse",
     "skill_score",
     "summarise",
-    # evaluate
+    # scoring — harness
     "EvaluationResult",
     "compare",
     "evaluate",
@@ -151,7 +174,7 @@ __all__ = [
     "drop_sparse_columns",
     "mean_impute",
     "scale_features",
-    # experiments
+    # runlog
     "best_metric",
     "best_run",
     "compose_run_name",

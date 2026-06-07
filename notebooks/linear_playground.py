@@ -34,7 +34,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Lasso, Ridge
 
 import forecast as fc
-from forecast.metrics import summarise
+from forecast import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -163,13 +163,9 @@ def _resolve_hyperparams(cfg_value: bool | dict, defaults: dict) -> dict | None:
     return {**defaults, **cfg_value}
 
 
-def _load_wave(buoy: str, year_min: int | None, year_max: int | None) -> pd.DataFrame:
-    return fc.restrict_to_years(fc.load_data(buoy=buoy), year_min, year_max)
-
-
 def _build_features(
-    merged: pd.DataFrame,
-    neighbour_cols: list[str],
+    wave: pd.DataFrame,
+    neighbours: dict[str, pd.Series],
     wind: pd.DataFrame | None,
     cfg: dict,
 ) -> pd.DataFrame:
@@ -179,15 +175,7 @@ def _build_features(
         if cfg.get(key) is not None:
             fc_kwargs[key] = cfg[key]
     feat_cfg = fc.FeatureConfig(**fc_kwargs) if fc_kwargs else None
-
-    primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-    X = fc.build_buoy_features(primary_only, config=feat_cfg)
-    if neighbour_cols:
-        X = fc.add_neighbour_features(X, merged, neighbour_cols, config=feat_cfg)
-    if wind is not None:
-        wind_cols = [c for c in wind.columns if not c.endswith("_deg")]
-        X = fc.add_neighbour_features(X, wind, wind_cols, config=feat_cfg)
-    return X
+    return fc.build_design(wave, neighbours, wind, kind="engineered", config=feat_cfg)
 
 
 def _run_model(
@@ -267,16 +255,16 @@ def main() -> None:
     cfg = CONFIG
     log = cfg["log_to_jsonl"]
 
-    wave = _load_wave(cfg["primary_buoy"], cfg["year_min"], cfg["year_max"])
-    neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
-    wind = fc.load_wind(wave.index, cfg["wind_stations"])
-    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
+    wave, neighbours, wind = fc.load_sources(
+        buoy=cfg["primary_buoy"],
+        neighbours=cfg["neighbours"], wind_stations=cfg["wind_stations"],
+        year_min=cfg["year_min"], year_max=cfg["year_max"],
+    )
 
     print(f"window         : {wave.index.min().date()} → {wave.index.max().date()}")
     print(f"rows           : {len(wave):,}")
 
-    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
-    X = _build_features(merged, neighbour_cols, wind, cfg)
+    X = _build_features(wave, neighbours, wind, cfg)
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 

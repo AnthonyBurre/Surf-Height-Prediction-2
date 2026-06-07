@@ -19,7 +19,7 @@ from forecast import (
     log_run,
     read_log,
 )
-from forecast.experiments import _jsonable, _model_hyperparams
+from forecast.runlog import _jsonable, _model_hyperparams
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ FIG_DIR.mkdir(exist_ok=True)
 # Display order — wave neighbours first (geographic-ish: north → south, then
 # distant), then wind stations. Stable order makes the heatmaps comparable
 # across families.
-DISPLAY_ORDER: list[str] = ab.STATIONS_WAVE + ab.STATIONS_WIND
+DISPLAY_ORDER: list[str] = fc.STATIONS_WAVE + fc.STATIONS_WIND
 
 
 def load_ablation_runs() -> pd.DataFrame:

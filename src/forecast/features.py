@@ -8,6 +8,7 @@ indexed at ``t``. Pair with ``data.make_target`` (which shifts by
 ``-horizon``) to keep the forecast origin at ``t``.
 """
 from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -246,3 +247,56 @@ def assemble_inputs(
         neighbour_cols.append(col)
     wind_cols = list(wind.columns) if wind is not None else []
     return merged, neighbour_cols, wind_cols
+
+
+def build_design(
+    wave: pd.DataFrame,
+    neighbours: dict[str, pd.Series],
+    wind: pd.DataFrame | None = None,
+    *,
+    kind: Literal["engineered", "raw"] = "engineered",
+    config: FeatureConfig | None = None,
+) -> pd.DataFrame:
+    """Build the model-ready design matrix from a primary buoy + chosen sources.
+
+    The one canonical "pick a feature style + data sources → X" builder; every
+    notebook/sweep funnels through here instead of re-deriving the chain.
+    ``wave`` is the primary buoy frame, ``neighbours`` maps each neighbour slug
+    to its ``hsig_m`` series (as ``load_neighbours`` returns), and ``wind`` is
+    the optional sin/cos-encoded wind frame (``load_wind``). All three must
+    share one index — use ``data.load_sources`` (or ``SourceBundle.subset``),
+    which also clips them to their overlap, to obtain them.
+
+    ``kind`` selects the feature style:
+
+    - ``"engineered"`` — lag/rolling/momentum matrix for linear/tree models
+      (``build_buoy_features`` on the primary buoy, ``add_neighbour_features``
+      for neighbour and wind columns). Raw wind bearings (``*_deg``) are
+      excluded — their sin/cos pair already carries direction.
+    - ``"raw"`` — circular + time channels only (``build_seq_features``) with
+      neighbour/wind columns appended verbatim. Sequence models window this
+      themselves, so no lag/rolling columns are added.
+
+    ``config`` tunes the engineered lag/rolling/momentum windows and is ignored
+    when ``kind="raw"``; ``None`` uses ``FeatureConfig()`` defaults.
+    """
+    merged, neighbour_cols, _wind_cols = assemble_inputs(wave, neighbours, wind)
+
+    if kind == "raw":
+        X = build_seq_features(merged)
+        if wind is not None:
+            for col in wind.columns:
+                X[col] = wind[col]
+        return X
+
+    if kind == "engineered":
+        primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
+        X = build_buoy_features(primary_only, config=config)
+        if neighbour_cols:
+            X = add_neighbour_features(X, merged, neighbour_cols, config=config)
+        if wind is not None:
+            wind_cols = [c for c in wind.columns if not c.endswith("_deg")]
+            X = add_neighbour_features(X, wind, wind_cols, config=config)
+        return X
+
+    raise ValueError(f"kind must be 'engineered' or 'raw', got {kind!r}")

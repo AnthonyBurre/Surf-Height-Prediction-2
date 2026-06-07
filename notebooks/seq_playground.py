@@ -94,35 +94,6 @@ CONFIG: dict = {
 # ---------------------------------------------------------------------------
 
 
-def load_wave(buoy: str, year_min: int | None, year_max: int | None) -> pd.DataFrame:
-    return fc.restrict_to_years(fc.load_data(buoy=buoy), year_min, year_max)
-
-
-def build_features(
-    merged: pd.DataFrame,
-    neighbour_cols: list[str],
-    wind: pd.DataFrame | None,
-    mode: str,
-) -> pd.DataFrame:
-    if mode == "raw":
-        # build_seq_features = encode_circular + add_time_features
-        # neighbour cols ride through unchanged; wind cols appended below
-        X = fc.build_seq_features(merged)
-        if wind is not None:
-            for col in wind.columns:
-                X[col] = wind[col]
-    elif mode == "engineered":
-        primary_only = merged[[c for c in merged.columns if c not in neighbour_cols]]
-        X = fc.build_buoy_features(primary_only)
-        if neighbour_cols:
-            X = fc.add_neighbour_features(X, merged, neighbour_cols)
-        if wind is not None:
-            X = fc.add_neighbour_features(X, wind, list(wind.columns))
-    else:
-        raise ValueError(f"feature_mode must be 'raw' or 'engineered', got {mode!r}")
-    return X
-
-
 def build_model(cfg: dict, device: str):
     common = dict(
         seq_len=cfg["seq_len"], hidden=cfg["hidden"], num_layers=cfg["num_layers"],
@@ -150,15 +121,14 @@ def main() -> None:
     device = fc.auto_device(cfg["device"])
     print(f"device         : {device}")
 
-    wave = load_wave(cfg["primary_buoy"], cfg.get("year_min"), cfg["year_max"])
-    neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
-    wind = fc.load_wind(wave.index, cfg["wind_stations"])
-
-    # Restrict to wind overlap when wind is in play, so every training row has wind.
-    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
-
-    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
-    X = build_features(merged, neighbour_cols, wind, cfg["feature_mode"])
+    # load_sources clips to wind overlap when wind is in play, so every
+    # training row has wind.
+    wave, neighbours, wind = fc.load_sources(
+        buoy=cfg["primary_buoy"],
+        neighbours=cfg["neighbours"], wind_stations=cfg["wind_stations"],
+        year_min=cfg.get("year_min"), year_max=cfg["year_max"],
+    )
+    X = fc.build_design(wave, neighbours, wind, kind=cfg["feature_mode"])
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 

@@ -3,9 +3,13 @@
 Also hosts the multi-source loaders (neighbour buoys, wind stations) that the
 notebook playgrounds previously duplicated.
 """
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+
+from qld_ckan.wave.constants import BUOYS
+from qld_ckan.wind.constants import STATIONS as WIND_STATIONS
 
 from .config import HORIZON_STEPS, TARGET_COL
 from .features import encode_circular
@@ -187,3 +191,157 @@ def restrict_to_overlap(
     if wind is not None:
         wind = wind.loc[start:end]
     return wave, neighbours, wind
+
+
+def load_sources(
+    buoy: str = "mooloolaba",
+    *,
+    neighbours: list[str] = (),
+    wind_stations: list[str] = (),
+    year_min: int | None = None,
+    year_max: int | None = None,
+) -> tuple[pd.DataFrame, dict[str, pd.Series], pd.DataFrame | None]:
+    """Load a primary buoy plus chosen neighbour/wind sources, clipped to overlap.
+
+    One-call replacement for the ``load_data`` → ``load_neighbours`` →
+    ``load_wind`` → ``restrict_to_overlap`` chain the playgrounds used to
+    re-derive. Returns ``(wave, neighbours, wind)`` ready to pass straight to
+    ``features.build_design``. Skip a source group with ``neighbours=()`` /
+    ``wind_stations=()``; with neither, the window is just the primary buoy's
+    ``[year_min, year_max]`` slice.
+    """
+    wave = restrict_to_years(load_data(buoy=buoy), year_min, year_max)
+    nb = load_neighbours(wave.index, list(neighbours))
+    wind = load_wind(wave.index, list(wind_stations))
+    return restrict_to_overlap(wave, nb, wind)
+
+
+# ---------------------------------------------------------------------------
+# Source bundles — load every source once, slice many fair subsets from it.
+#
+# For comparison studies (e.g. the feature ablation) where dozens of source
+# subsets must be scored against ONE fixed window so that adding/dropping a
+# station changes only the column set, never the training window.
+# ---------------------------------------------------------------------------
+
+# The full station roster, derived from the qld_ckan constants — the single
+# source of truth for which CSVs the downloader can produce.
+PRIMARY_BUOY = "mooloolaba"
+
+# Every neighbour buoy in the network minus the primary. The primary is always
+# present — it's the buoy whose hsig_m we're forecasting.
+STATIONS_WAVE: list[str] = [s for s in BUOYS.keys() if s != PRIMARY_BUOY]
+
+STATIONS_WIND: list[str] = list(WIND_STATIONS.keys())
+
+ALL_STATIONS: list[str] = STATIONS_WAVE + STATIONS_WIND
+
+
+def _split_stations(stations: list[str]) -> tuple[list[str], list[str]]:
+    """Partition a flat station list into (wave_slugs, wind_slugs)."""
+    wave = [s for s in stations if s in STATIONS_WAVE]
+    wind = [s for s in stations if s in STATIONS_WIND]
+    unknown = set(stations) - set(wave) - set(wind)
+    if unknown:
+        raise ValueError(f"Unknown station slugs: {sorted(unknown)}")
+    return wave, wind
+
+
+def compute_fixed_window(
+    wave: pd.DataFrame,
+    neighbours: dict[str, pd.Series],
+    wind: pd.DataFrame,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Earliest start / latest end where every station has data.
+
+    Differs from ``restrict_to_overlap`` in two ways:
+      - Treats wave-neighbour series individually (not just the joint index).
+      - Treats each wind station's columns as a group — late-arriving
+        stations (e.g. southport from 2018) shrink the window even though
+        ``wind.dropna(how="all")`` would not catch them.
+
+    Both are needed so a comparison grid is apples-to-apples across subsets.
+    """
+    starts = [wave.dropna(how="all").index.min()]
+    ends = [wave.dropna(how="all").index.max()]
+    for s, series in neighbours.items():
+        valid = series.dropna()
+        if valid.empty:
+            raise ValueError(f"Neighbour {s!r} has no non-NaN rows")
+        starts.append(valid.index.min())
+        ends.append(valid.index.max())
+    for s in STATIONS_WIND:
+        cols = [c for c in wind.columns if c.startswith(f"{s}_")]
+        if not cols:
+            continue
+        # ``how="all"`` not ``"any"``: a single sparse column (e.g. lytton
+        # wind_speed_std_ms only has 2021 data) must not collapse the window
+        # — the Preprocessor will later drop columns whose NaN fraction is
+        # too high.
+        valid_idx = wind[cols].dropna(how="all").index
+        if len(valid_idx) == 0:
+            raise ValueError(f"Wind station {s!r} has no rows with any column populated")
+        starts.append(valid_idx.min())
+        ends.append(valid_idx.max())
+    return max(starts), min(ends)
+
+
+@dataclass
+class SourceBundle:
+    """All sources loaded once and clipped to the all-station valid window.
+
+    The window is computed so that EVERY station in the study has data for
+    every row in ``wave.index`` — the latest-starting station (e.g. wide-bay
+    2019) sets the start; the earliest-ending source sets the end. This is the
+    single most important guarantee a comparison study makes: adding or
+    dropping a station changes only the column set seen by the model, not the
+    training window.
+
+    Subset views are produced cheaply by indexing — no re-loading and no
+    re-overlapping. Pair ``subset(stations)`` with ``features.build_design``:
+
+    >>> bundle = load_all_sources()
+    >>> X = build_design(*bundle.subset(["tweed-heads", "mountain-creek"]))
+    """
+    wave: pd.DataFrame
+    neighbours: dict[str, pd.Series]
+    wind: pd.DataFrame
+    window_start: pd.Timestamp
+    window_end: pd.Timestamp
+
+    def subset(
+        self, stations: list[str]
+    ) -> tuple[pd.DataFrame, dict[str, pd.Series], pd.DataFrame | None]:
+        wave_slugs, wind_slugs = _split_stations(stations)
+        nb = {s: self.neighbours[s] for s in wave_slugs}
+        if wind_slugs:
+            wind_cols = [
+                c for c in self.wind.columns
+                if any(c.startswith(f"{s}_") for s in wind_slugs)
+            ]
+            wind = self.wind[wind_cols]
+        else:
+            wind = None
+        return self.wave, nb, wind
+
+
+def load_all_sources(year_max: int | None = 2024) -> SourceBundle:
+    """Load primary buoy + every wave neighbour + every wind station, clip to fixed window.
+
+    ``year_max`` mirrors the convention from ``notebooks/horizon_sweep.py``
+    (cap at 2024 to keep wind coverage; 2025 is held out for real-world
+    performance evaluation elsewhere).
+    """
+    wave = restrict_to_years(load_data(buoy=PRIMARY_BUOY), None, year_max)
+    neighbours = load_neighbours(wave.index, STATIONS_WAVE)
+    wind = load_wind(wave.index, STATIONS_WIND)
+    if wind is None:
+        raise RuntimeError("load_wind returned None for the full station list — check CSVs.")
+    start, end = compute_fixed_window(wave, neighbours, wind)
+    return SourceBundle(
+        wave=wave.loc[start:end],
+        neighbours={k: v.loc[start:end] for k, v in neighbours.items()},
+        wind=wind.loc[start:end],
+        window_start=start,
+        window_end=end,
+    )

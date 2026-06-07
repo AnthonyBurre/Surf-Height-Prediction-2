@@ -1,4 +1,13 @@
-"""Append-only JSONL experiment log.
+"""Run log for experiments — write, query, and name runs.
+
+Three sections, in order:
+
+- **store** — append-only JSONL writer (``log_run``, ``evaluate_and_log``)
+  plus the readers (``read_log``, ``recent_runs``).
+- **query** — filter/lookup helpers over the log (``find_runs``,
+  ``latest_run``/``latest_metric``, ``best_run``/``best_metric``).
+- **naming** — build stable run names from playground config
+  (``wind_tag``, ``compose_run_name``); pure string helpers, no log IO.
 
 One ``log_run`` call appends one self-describing record:
 
@@ -25,9 +34,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .evaluate import EvaluationResult, evaluate
+from .scoring import EvaluationResult, evaluate
 
 DEFAULT_LOG = Path(__file__).parents[2] / "experiments.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Store — append records to the JSONL log and read them back
+# ---------------------------------------------------------------------------
 
 
 def _jsonable(v: Any) -> Any:
@@ -202,7 +216,7 @@ def recent_runs(
 
 
 # ---------------------------------------------------------------------------
-# Lookups — filter the JSONL log by common run attributes
+# Query — filter and look up runs by common attributes
 # ---------------------------------------------------------------------------
 
 
@@ -366,6 +380,11 @@ def best_metric(
         return None
     val = metrics.get(metric)
     return float(val) if val is not None else None
+
+
+# ---------------------------------------------------------------------------
+# Naming — build stable run names from config (no log IO)
+# ---------------------------------------------------------------------------
 
 
 def wind_tag(stations: list[str]) -> str:

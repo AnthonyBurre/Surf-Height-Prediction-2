@@ -36,8 +36,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 
 import forecast as fc
-from forecast import ablation as ab
-from forecast.metrics import summarise
+from forecast import summarise
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -80,7 +79,7 @@ def _cell_name(family: str, h: int, direction: str, station: str | None) -> str:
 
 
 def run_ridge_cell(
-    sources: ab.PreloadedSources,
+    sources: fc.SourceBundle,
     horizon_h: int,
     direction: str,
     stations: list[str],
@@ -90,13 +89,13 @@ def run_ridge_cell(
     y_te: pd.Series,
     extra_base: dict,
 ) -> dict[str, float]:
-    X = ab.build_engineered_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="engineered")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
     preproc = fc.Preprocessor(max_nan_frac=0.5, scaling="robust").fit(X_tr)
     X_tr_imp, X_te_imp = preproc.transform(X_tr), preproc.transform(X_te)
-    sources_list = [ab.PRIMARY_BUOY] + stations
+    sources_list = [fc.PRIMARY_BUOY] + stations
     result = fc.evaluate_and_log(
         Ridge(**RIDGE_KW), X_tr_imp, y_tr, X_te_imp, y_te,
         name=_cell_name("ridge", horizon_h, direction, station),
@@ -109,7 +108,7 @@ def run_ridge_cell(
 
 
 def run_hgb_cell(
-    sources: ab.PreloadedSources,
+    sources: fc.SourceBundle,
     horizon_h: int,
     direction: str,
     stations: list[str],
@@ -122,7 +121,7 @@ def run_hgb_cell(
     extra_base: dict,
 ) -> dict[str, float]:
     """HGB fit on persistence-residual (mirrors horizon_sweep.py)."""
-    X = ab.build_engineered_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="engineered")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
@@ -135,7 +134,7 @@ def run_hgb_cell(
     model.fit(X_tr_raw.loc[mask].to_numpy(), y_res.loc[mask].to_numpy())
     hgb_preds = wave_level_te.to_numpy() + model.predict(X_te_raw.to_numpy())
     metrics = summarise(y_te.to_numpy(), hgb_preds, y_pred_baseline=persist_preds)
-    sources_list = [ab.PRIMARY_BUOY] + stations
+    sources_list = [fc.PRIMARY_BUOY] + stations
     name = _cell_name("hgb", horizon_h, direction, station)
     fc.log_run(
         fc.EvaluationResult(name=name, metrics=metrics, predictions=hgb_preds, model=model),
@@ -150,7 +149,7 @@ def run_hgb_cell(
 
 
 def run_gru_cell(
-    sources: ab.PreloadedSources,
+    sources: fc.SourceBundle,
     horizon_h: int,
     direction: str,
     stations: list[str],
@@ -160,7 +159,7 @@ def run_gru_cell(
     y_te: pd.Series,
     extra_base: dict,
 ) -> dict[str, float]:
-    X = ab.build_seq_design(sources, stations)
+    X = fc.build_design(*sources.subset(stations), kind="raw")
     ts = pd.Timestamp(TEST_START).tz_localize(fc.SOURCE_TZ)
     pos = _pinned_split(X.index, ts)
     X_tr, X_te = X.iloc[:pos], X.iloc[pos:]
@@ -180,7 +179,7 @@ def run_gru_cell(
     preds = model.predict(X_te_imp)
     elapsed = time.time() - t0
     metrics = summarise(y_te.to_numpy(), preds, y_pred_baseline=persist_preds)
-    sources_list = [ab.PRIMARY_BUOY] + stations
+    sources_list = [fc.PRIMARY_BUOY] + stations
     name = _cell_name("gru", horizon_h, direction, station)
     fc.log_run(
         fc.EvaluationResult(name=name, metrics=metrics, predictions=preds, model=model),
@@ -201,7 +200,7 @@ def run_gru_cell(
 
 
 def run_horizon(
-    sources: ab.PreloadedSources,
+    sources: fc.SourceBundle,
     horizon_h: int,
     families: list[str],
     *,
@@ -243,11 +242,11 @@ def run_horizon(
     if do_baseline:
         cells.append(("baseline", None, []))
     if do_ceiling:
-        cells.append(("ceiling", None, ab.ALL_STATIONS))
-    for s in ab.ALL_STATIONS:
+        cells.append(("ceiling", None, fc.ALL_STATIONS))
+    for s in fc.ALL_STATIONS:
         cells.append(("add", s, [s]))
-    for s in ab.ALL_STATIONS:
-        cells.append(("drop", s, [x for x in ab.ALL_STATIONS if x != s]))
+    for s in fc.ALL_STATIONS:
+        cells.append(("drop", s, [x for x in fc.ALL_STATIONS if x != s]))
 
     for family in families:
         print(f"\n  === family={family} ===")
@@ -303,10 +302,10 @@ def main() -> None:
 
     t0 = time.time()
     print("Loading sources …")
-    sources = ab.load_all_sources()
+    sources = fc.load_all_sources()
     print(f"  fixed window: {sources.window_start} → {sources.window_end}")
     print(f"  wave rows: {len(sources.wave):,}")
-    print(f"  ALL_STATIONS ({len(ab.ALL_STATIONS)}): {ab.ALL_STATIONS}")
+    print(f"  ALL_STATIONS ({len(fc.ALL_STATIONS)}): {fc.ALL_STATIONS}")
 
     for h in horizons:
         run_horizon(sources, h, families,

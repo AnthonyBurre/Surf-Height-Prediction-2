@@ -44,7 +44,6 @@ import warnings
 import pandas as pd
 
 import forecast as fc
-from seq_playground import build_features, load_wave
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="Mean of empty slice")
@@ -162,13 +161,12 @@ def build_data(feature_set: str, test_start_ts: pd.Timestamp | None = None):
     score against the same held-out window.
     """
     cfg = FEATURE_SETS[feature_set]
-    wave = load_wave(PRIMARY_BUOY, cfg["year_min"], cfg["year_max"])
-    neighbours = fc.load_neighbours(wave.index, cfg["neighbours"])
-    wind = fc.load_wind(wave.index, cfg["wind_stations"])
-    wave, neighbours, wind = fc.restrict_to_overlap(wave, neighbours, wind)
-
-    merged, neighbour_cols, _ = fc.assemble_inputs(wave, neighbours, wind)
-    X = build_features(merged, neighbour_cols, wind, FEATURE_MODE)
+    wave, neighbours, wind = fc.load_sources(
+        buoy=PRIMARY_BUOY,
+        neighbours=cfg["neighbours"], wind_stations=cfg["wind_stations"],
+        year_min=cfg["year_min"], year_max=cfg["year_max"],
+    )
+    X = fc.build_design(wave, neighbours, wind, kind=FEATURE_MODE)
     y = fc.make_target(wave)
     X_p = wave[["hsig_m"]]
 
