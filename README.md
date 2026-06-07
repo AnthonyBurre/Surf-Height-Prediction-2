@@ -60,139 +60,10 @@ The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
 ![Wind coverage](notebooks/figures/wind_coverage.png)
 
-### Dataset selection: length vs breadth
+## Modeling and Results
 
-The coverage grids define the trade space for any experiment. The choice is a breadth-vs-depth call across two axes — how far back to train, and how many neighbour sources to include:
+TODO
 
-1. **Standard window, full neighbour set (2015-2024 AEST, 5 buoys + 3 wind stations).** The default for the headline results. Lytton wind starts 2015, so this window is the deepest one where every "always-on" source has data. Mooloolaba + Brisbane / Caloundra / Gold Coast / North Moreton Bay / Tweed Heads neighbours and Mountain Creek / Deception Bay / Lytton wind — 10 years of training, no late-deployment gaps.
-2. **Short window, wide set (2019-2024 AEST, 7 buoys + 4 wind stations).** Palm Beach (deployed 2017), Southport wind (mid-2018), and Wide Bay (2019, the only buoy upstream of northerly swells) only join here. Six years of training in exchange for two extra neighbour buoys and one extra wind station.
-
-## Data preparation
-
-### Feature engineering
-
-The feature matrix is assembled in three layers, each a single call:
-
-1. **Base primary-buoy matrix** (`fc.build_buoy_features`) — circular encoding, hour/doy time features, lags, rolling stats, momentum. Lag/rolling/delta grids are tunable via `FeatureConfig`. For sequence models, `fc.build_seq_features` swaps in raw channels with no pre-built lags (the model windows its own input).
-2. **Neighbour buoys** (`fc.add_neighbour_features`) — raw value, lag copies, and rolling mean/std per neighbour column, reusing the same `FeatureConfig`.
-3. **Wind stations** — same `add_neighbour_features` call on each wind station's columns. `fc.load_wind` sin/cos-encodes `wind_dir_deg` and station-prefixes every column so cross-station features stay distinguishable.
-
-### Preprocessing pipeline
-
-`forecast.preprocess.Preprocessor` bundles the three steps the playgrounds run between `chronological_split` and `model.fit`:
-
-1. **Drop sparse columns** — any column whose **train-set** NaN fraction exceeds `max_nan_frac` (default 0.5) is removed. Mean-imputing a near-empty column gives a near-constant feature that silently corrodes gradient-based sequence models (see the dropped-column note under Results for a concrete TCN example). The `wave_column_coverage.png` and `wind_column_coverage.png` EDA figures surface candidates ahead of time.
-2. **Mean impute** — column-wise mean from training data fills remaining NaNs.
-3. **Scale** (optional) — `"robust"` (median/IQR) or `"standard"`. Linear models default to robust because wave data is heavy-tailed and storm spikes would inflate a standard-deviation scale. Trees (HGB) take the raw matrix. Sequence models scale internally (`scaler="robust"` or `"standard"`, fit on train) and consume the unscaled `build_seq_features` frame. `*_sin`/`*_cos` columns pass through untouched in all cases.
-
-The standalone helpers (`fc.drop_sparse_columns`, `fc.mean_impute`, `fc.scale_features`) still exist for one-shot use, but the playgrounds use the class so the fitted state can be inspected, asserted, and pickled:
-
-```python
-preproc = fc.Preprocessor(max_nan_frac=0.5, scaling="robust").fit(X_train)
-X_train_p = preproc.transform(X_train)
-X_test_p  = preproc.transform(X_test)
-
-# Held-out year scoring: pair the model with its preprocessor.
-preproc.save("models/ridge_preproc.pkl")
-# Later, with a new year's raw inputs:
-preproc = fc.Preprocessor.load("models/ridge_preproc.pkl")
-X_2025_p = preproc.transform(X_2025)  # raises if any fit-time column is missing
-```
-
-`transform()` enforces the schema the preprocessor was fitted on: any missing required column raises `ValueError`; extra columns (e.g. a new wind station appearing later) are silently dropped. This catches the failure mode where a held-out year's feature matrix doesn't line up with the training-time decisions — without the class, that mismatch would surface as a silently wrong prediction.
-
-
-## Non-model baselines
-
-Two no-model references frame every result in this project:
-
-- **Persistence** — predict ŷ(t+h) = y(t). Strong at short horizons because Mooloolaba's `hsig_m` is highly autocorrelated on the order of hours, so "looks like now" is hard to beat in the first half-day.
-- **Climatology hour** — predict the train-set mean of `hsig_m` conditioned on hour-of-day(t+h). Horizon-independent: it ignores `t` entirely, so its RMSE is flat at ~0.48 m across every horizon.
-
-The two crossover between **h=12 and h=24** on the pinned 2023-01-01 → 2024-12-31 test window — persistence wins for h≤12, climatology from h≥24 onward:
-
-| h | Persistence RMSE (m) | Climatology hour RMSE (m) | Better |
-|---|---|---|---|
-| 6h  | 0.291 | 0.479 | persistence |
-| 12h | 0.400 | 0.479 | persistence |
-| 24h | 0.529 | 0.479 | **climatology** |
-| 36h | 0.562 | 0.479 | climatology |
-| 48h | 0.574 | 0.479 | climatology |
-| 72h | 0.624 | 0.479 | climatology |
-
-Residual diagnostics at the crossover horizon (h=24) show *why* climatology is the harder reference past this point — persistence error is roughly symmetric noise (it just doesn't know what wave height looks like a day out) while climatology has a tighter core but a left-skewed tail, systematically under-predicting the biggest swells.
-
-![Baseline residuals at h=24](notebooks/figures/baseline_residuals.png)
-
-## Model selection and tuning
-
-Models are evaluated across six forecast horizons (6h → 72h) on the pinned 2023-01-01 → 2024-12-31 test window. The figure below shows the lowest-RMSE single (non-ensemble) model at each horizon; every line is a (dataset, architecture) combo that won at least one horizon, with stars marking its winning horizons. The "best baseline" backdrop is the lower envelope of persistence and climatology — see *Non-model baselines* above for the per-horizon breakdown.
-
-![Best model per forecast horizon](notebooks/figures/horizon_sweep.png)
-
-Numbers behind the chart:
-
-| h | Better baseline RMSE (m) | Best single model | RMSE (m) | Skill vs better baseline | Best ensemble | RMSE (m) | Skill vs better baseline |
-|---|---|---|---|---|---|---|---|
-| 6h  | 0.291 (persistence) | baseline / HGB-on-residual | 0.254 | +0.127 | wide ensemble | 0.256 | +0.120 |
-| 12h | 0.400 (persistence) | wide / Lasso | 0.348 | +0.129 | wide ensemble | 0.344 | +0.138 |
-| 24h | 0.479 (climatology) | tweed_mc / GRU | 0.434 | +0.093 | tweed_mc ensemble | 0.431 | +0.099 |
-| 36h | 0.479 (climatology) | tweed_mc / RNN | 0.452 | +0.056 | solo ensemble | 0.449 | +0.063 |
-| 48h | 0.479 (climatology) | solo / Lasso | 0.458 | +0.044 | baseline ensemble | 0.459 | +0.042 |
-| 72h | 0.479 (climatology) | tweed_mc / RNN | 0.473 | +0.012 | baseline ensemble | 0.477 | +0.004 |
-
-Skill collapses with horizon: +12.9% over the harder-of-persistence-or-climatology at h=12 down to +1.2% by h=72, where every model converges on the climatological mean because there is nothing left to predict from observations at *t*. The combo that wins also shifts — wide/baseline (broad neighbour sets) hold short horizons where local context matters, and the narrower **tweed_mc** (single upstream buoy + one wind station) takes over from h=24 onward, consistent with long-horizon skill coming from swell-upstream signal rather than local conditions.
-
-### Linear models (h=12 deep dive)
-
-Nine configs were swept through `notebooks/linear_playground.py`, all at h=12 — the original prediction target before the horizon sweep. The cross-horizon view is the chart above; this section drills into how source breadth and regularisation interact when persistence is still the harder reference. All scored on the same pinned test window (2023-01-01 → 2024-12-31 AEST) so RMSE is directly comparable. Each config runs Ridge (α=1), Lasso (α=0.001), HGB-on-residuals (`max_iter=800`, `lr=0.03`, `depth=6`), and a nanmean ensemble of the three. Persistence on the shared window is **RMSE 0.3996 m** (39.96 cm).
-
-| Config | Window | Sources | Feats | Best member | Ensemble RMSE (m) | Skill vs persistence |
-|---|---|---|---|---|---|---|
-| **v2 wide** | 2019–2024 | 7 buoys + 4 wind | 406 | Lasso 0.3481 | **0.3436** | **+0.2610** |
-| v6 ridgehi (α=10 / α=5e-4) | 2015–2024 | 5 buoys + 3 wind | 328 | HGB 0.3470 | 0.3439 | +0.2598 |
-| v1 baseline | 2015–2024 | 5 buoys + 3 wind | 328 | HGB 0.3470 | 0.3441 | +0.2590 |
-| v9 tweed + mc-wind | 2015–2024 | tweed-heads + mountain-creek wind | 172 | HGB 0.3470 | 0.3446 | +0.2567 |
-| v3 no-wind | 2015–2024 | 5 buoys, no wind | 172 | HGB 0.3477 | 0.3446 | +0.2566 |
-| v5 dense lags | 2015–2024 | 5 buoys + 3 wind | 433 | HGB 0.3488 | 0.3452 | +0.2542 |
-| v7 HGB-heavy alone | 2015–2024 | 5 buoys + 3 wind | 328 | HGB 0.3469 | — | +0.2460 |
-| v8 mc-wind only | 2015–2024 | mooloolaba + mountain-creek wind | 159 | HGB 0.3500 | 0.3475 | +0.2443 |
-| v4 solo (no neighbours, no wind) | 2015–2024 | mooloolaba only | 107 | HGB 0.3527 | 0.3490 | +0.2379 |
-
-The headline takeaway is that **every reasonable config lands inside a ~5 mm RMSE band** (0.3436–0.3490) — the model family, regularisation strength, and feature grid all matter less than which external sources are in the feature matrix. Concretely:
-
-- **One upstream buoy carries almost all the neighbour signal.** v9 (Tweed Heads + Mountain Creek wind, 1 buoy + 1 wind) hits ensemble RMSE 0.3446 — bit-for-bit tied with v3 (5 buoys, no wind, also 0.3446) and within 1 mm of v1 (5 buoys + 3 wind, 0.3441). Tweed Heads is ~100 km south of Mooloolaba and sees southerly swells first; once you have it, Brisbane / Caloundra / Gold Coast / North Moreton Bay add nothing measurable.
-- **The source ladder is steep then flat.** Mooloolaba alone (v4) 0.3490 → add Mountain Creek wind (v8) 0.3475 (−1.5 mm) → add Tweed Heads buoy (v9) 0.3446 (−2.9 mm) → add 4 more neighbour buoys + 2 more wind stations (v1) 0.3441 (−0.5 mm). The first two sources beyond the primary buoy do almost all the work.
-- **Wide window helps the ensemble, marginally.** v2 (2019-2024, 7 buoys + 4 wind) edges out v1 by 0.5 mm, despite halving the training set — the two extra neighbour buoys (Palm Beach, Wide Bay) and Southport wind compensate.
-- **The default feature grid is already near-optimal.** v5 doubles the lag/rolling/momentum density and gets *worse* by 1.1 mm — the marginal columns are noise the linear models then have to regularise away.
-- **The ensemble is the right shipping artefact.** Every config's ensemble beats every individual member in it, even though the members are highly correlated. With three near-equally-good models there's no Bayesian-averaging dilemma: the nanmean costs nothing and shaves another 0.3–0.5 cm.
-- **HGB-on-residuals is the strongest single model**, modestly ahead of Ridge and Lasso across configs. Direct-target HGB (run separately in v7-style trials) is consistently worse, which matches the priors — letting persistence handle the level and giving HGB only the delta is a meaningfully easier learning problem.
-
-For full per-model rows including MAE and bias, see `experiments.jsonl` (filter on `name` starting with `lineopt_v`).
-
-## Real world performance
-
-Each new year that passes can be scored as a true blind set against our best models. This way we evaluate them against brand new data that wasn't implicitly leaked through the train/test iterative process. Awaiting the QLD wind 2025 release expected September 2026.
-
-**Pre-committed candidates for 2025**:
-
-- TBD
-- TBD
-- **TBD Ensemble**
-
-Scoring a new year against these committed candidates is a re-fit of the same recipe on the same training data, not a load of a serialised model. The `Preprocessor` fitted alongside each model captures the drop list, imputer means, and scaler stats, so the held-out year sees the same transformation the model was trained against — including any schema drift (extra columns are dropped, missing required columns raise).
-
-| Year | h | Model | RMSE (cm) | Skill |
-|------|---|-------|-----------|-------|
-| 2025 | 12h | Ridge | _TBD_ | _TBD_ |
-| 2025 | 12h | TCN | _TBD_ | _TBD_ |
-| 2025 | 12h | Ensemble | _TBD_ | _TBD_ |
-| 2025 | 24h | Ridge | _TBD_ | _TBD_ |
-| 2025 | 24h | TCN | _TBD_ | _TBD_ |
-| 2025 | 24h | Ensemble | _TBD_ | _TBD_ |
-| 2025 | 48h | Ridge | _TBD_ | _TBD_ |
-| 2025 | 48h | TCN | _TBD_ | _TBD_ |
-| 2025 | 48h | Ensemble | _TBD_ | _TBD_ |
 
 
 ## Reproducibility
@@ -216,7 +87,7 @@ Run tests after changes:
 - **`qld_ckan`**: Downloads yearly records from the QLD CKAN Datastore API, unifies the schema, and writes a cleaned CSV per source.
     - `qld_ckan.wave` (wave buoys) 
     - `qld_ckan.wind` (air-quality-station 10 m wind)
-- **`viz`**: Source-agnostic plotting, organised by pipeline stage: shared time-series primitives, post-download EDA heatmaps, and post-experiment result charts that consume `forecast.find_runs` output.
+- **`viz`**: Source-agnostic plotting
 - **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, and an evaluation harness. See *Available forecasters* below for the model list.
 
 Experiment scripts in `notebooks/` run on top of these packages.
@@ -239,23 +110,11 @@ Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the regi
 ./.venv/bin/python -m qld_ckan wave --buoy brisbane --year-min 2018 --year-max 2020
 ```
 
-`forecast` exposes a flat import surface (`import forecast as fc`): target construction (`make_target` shifts `hsig_m` 24 steps ahead), chronological 80/20 split, feature builders, and an `evaluate_and_log` harness that scores `MAE / RMSE / Bias / SkillVsBaseline` against persistence and appends to `experiments.jsonl`. A typical call:
-
-```python
-result = fc.evaluate_and_log(
-    fc.Ridge(alpha=1.0), X_tr, y_tr, X_te, y_te,
-    name="ridge", data_sources=["mooloolaba"],
-)
-print(result.metrics)
-```
-
 ### Available forecasters
 
 | family          | classes                                                                         |
 |-----------------|---------------------------------------------------------------------------------|
-| baselines       | `PersistenceForecaster`, `ClimatologyHourForecaster` |
-| linear / tree   | any scikit-learn regressor (Ridge, Lasso, HGB, …)                               |
-| sequence models | `SimpleRNNForecaster`, `GRUForecaster`, `LSTMForecaster`, `TCNForecaster`       |
+
 
 ### Logging experiments
 
@@ -270,7 +129,7 @@ All scripts are plain `.py` files — run directly:
 ```
 
 
-## Roadmap
+## Future Roadmap
 
 1. **Predict quantiles, not just the mean.** Quantile HGB (`HistGradientBoostingRegressor(loss="quantile", quantile=q)`) for P10/P50/P90, or conformalised intervals over Ridge. Also the structural fix for the tail underfit — residuals-vs-predicted shows bias at high wave heights that pinball loss addresses and a target transform won't.
 
