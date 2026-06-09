@@ -7,7 +7,6 @@ An exercise in predictive modeling, this project is all about forecasting signif
 
 Given observations up to time *t* (30-minute cadence), predict `hsig_m` at *t + 6h, 12h, 24h, 36h, 48h, 72h*.
 
-Evaluation uses a chronological 80/20 split with a pinned 2023-01-01 → 2024-12-31 test window. The headline metric is RMSE in meters and compared against two non-model predictive .
 
 ## Data source
 
@@ -62,10 +61,6 @@ The wind frame is reindexed onto the 30-minute wave grid by forward-fill.
 
 ## Modeling and Results
 
-TODO
-
-
-
 ## Reproducibility
 
 ### Setup
@@ -88,7 +83,7 @@ Run tests after changes:
     - `qld_ckan.wave` (wave buoys) 
     - `qld_ckan.wind` (air-quality-station 10 m wind)
 - **`viz`**: Source-agnostic plotting
-- **`forecast`**: Target construction, chronological splits, feature engineering, baselines, metrics, and an evaluation harness. See *Available forecasters* below for the model list.
+- **`forecast`**: Target construction, chronological splits, leakage-safe feature engineering, baselines, metrics, rolling-origin backtesting with a block-bootstrap noise floor and paired-significance tests, an evaluation harness, and append-only experiment logging. See *Available forecasters* below for the model list.
 
 Experiment scripts in `notebooks/` run on top of these packages.
 
@@ -112,8 +107,8 @@ Both subcommands accept `--year-min` / `--year-max` (inclusive) to clip the regi
 
 ### Available forecasters
 
-| family          | classes                                                                         |
-|-----------------|---------------------------------------------------------------------------------|
+| family     | classes                                                                              |
+|------------|--------------------------------------------------------------------------------------|
 
 
 ### Logging experiments
@@ -127,7 +122,6 @@ All scripts are plain `.py` files — run directly:
 ```bash
 ./.venv/bin/python notebooks/<script>.py
 ```
-
 
 ## Future Roadmap
 
