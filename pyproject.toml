@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wave-data"
+version = "0.1.0"
+description = "Surf-height forecasting from QLD CKAN wave/wind feeds."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.3",
+    "requests>=2.32",
+    "scikit-learn>=1.7",
+]
+
+[project.optional-dependencies]
+# Classical/statistical forecasting (STL, ADF/KPSS, Theta) + sequence neural nets.
+forecast = [
+    "statsmodels>=0.14.6",
+    # torch >=2.7 ships only macosx_14 arm64 wheels; this host is macOS 13
+    # (Darwin 22), so pin to the 2.2-2.6 line that still publishes
+    # macosx_11_0_arm64 wheels (forward-compatible with macOS 13).
+    "torch>=2.2,<2.7",
+]
+# Source-agnostic plotting.
+viz = [
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+addopts = "-q"
