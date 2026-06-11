@@ -1,38 +1,109 @@
+# Architecture
+
+Three layers, bottom-up: **`qld_ckan`** turns the QLD CKAN feeds into clean CSVs;
+**`forecast`** turns those CSVs into origin-indexed targets/features and scores models
+under an honest rolling-origin protocol; **`viz`** renders the EDA and result figures.
+Scripts in `notebooks/` drive the top two layers and write the append-only run log.
 
 ## Project structure
 
 ```
 Surf-Height-Prediction-2/
 ├── src/
-│   ├── qld_ckan/               # ETL package — QLD CKAN Datastore client
+│   ├── qld_ckan/               # ETL — QLD CKAN Datastore client (kept as-is)
 │   │   ├── __init__.py         # session, paginate_records, fetch_all_years, unify_frames
 │   │   ├── __main__.py         # `python -m qld_ckan {wave,wind} [...]` entry point
 │   │   ├── wave/               # wave-buoy network (30-min grid)
-│   │   │   ├── constants.py    # CKAN resource IDs per buoy per year
+│   │   │   ├── constants.py    # CKAN resource IDs per buoy per year, SENTINEL, rename map
 │   │   │   ├── downloader.py   # per-year fetch + pre-2017 column normalisation
 │   │   │   └── pipeline.py     # unify / clean / export CSV
 │   │   └── wind/               # AWS station 10 m wind (hourly grid)
 │   │       ├── constants.py
 │   │       ├── downloader.py
 │   │       └── pipeline.py
-│   ├── forecast/               # modelling package
-│   │   ├── config.py           # HORIZON_STEPS, TARGET_COL, FEATURE_COLS, CIRCULAR_COLS
-│   │   ├── data.py             # load_data, make_target, chronological_split, load_neighbours, load_wind, restrict_to_overlap
-│   │   ├── features.py         # FeatureConfig, build_buoy_features, add_neighbour_features, build_seq_features
-│   │   ├── baselines.py        # Persistence, ClimatologyHour forecasters
-│   │   ├── neural.py           # SimpleRNN / GRU / LSTM / TCN forecasters (PyTorch)
-│   │   ├── metrics.py          # MAE, RMSE, bias, skill score (all NaN-aware)
-│   │   ├── preprocess.py       # drop_sparse_columns, mean_impute, scale_features + Preprocessor (fit/transform/save/load)
-│   │   ├── evaluate.py         # fit / predict / score harness + compare helper
-│   │   └── experiments.py      # append-only JSONL run log + read_log reader
-│   ├── viz/                    # plotting package — split by pipeline stage
-│   │   ├── timeseries.py       # SHARED:           plot_series, plot_multi_source, autocorrelation_curve
-│   │   ├── eda.py              # POST-DOWNLOAD:    feature × horizon, cross-source heatmaps
-│   │   └── results.py          # POST-EXPERIMENT:  plot_horizon_winners (consumes find_runs output)
-│   └── tests/                  # pytest suite (network-mocked)
-├── notebooks/                  # experiment scripts
+│   │
+│   ├── forecast/               # modelling harness — `import forecast as fc`
+│   │   ├── __init__.py         # public surface (re-exports + lazy `fc.neural`)
+│   │   ├── constants.py        # horizons, columns, paths, BLIND_START=2025-01-01
+│   │   ├── data.py             # glob CSV loaders, build_dataset(), common_overlap()
+│   │   ├── targets.py          # make_target(s) (origin-indexed y(t+h)), align_xy()
+│   │   ├── features.py         # leakage-safe engineered matrix (windows end at t-1)
+│   │   ├── windows.py          # raw (context × channel) tensors for the NN + scaler
+│   │   ├── baselines.py        # Persistence/SeasonalNaive/SeasonalMean/Drift/Theta
+│   │   ├── metrics.py          # rmse/mae/bias/mase/smape/wape, skill, stratified
+│   │   ├── splits.py           # chronological / blind / RollingOriginSplitter / FixedSplit
+│   │   ├── backtest/__init__.py# rolling_origin, block_bootstrap_ci, paired_block_bootstrap, DM
+│   │   ├── models.py           # Ridge/Lasso/ElasticNet/HGB wrappers + DirectMultiHorizon
+│   │   ├── neural.py           # GRU/LSTM/TCN SeqForecaster, seed-averaging (torch, lazy)
+│   │   └── evaluate.py         # evaluate(), EvalResult, evaluate_and_log/log_run/read_log
+│   │
+│   ├── viz/                    # source-agnostic plotting (matplotlib/seaborn)
+│   │   ├── __init__.py         # re-exports + apply_style()/save()
+│   │   ├── _style.py           # shared rcParams, palette, save helper
+│   │   ├── eda.py              # Phase-2 figures (coverage, dist, STL, ACF, calendar, lead-lag, screen)
+│   │   └── results.py          # Phase-11 figures (skill-vs-horizon, forest, residual, importance)
+│   │
+│   └── tests/                  # pytest suite (synthetic fixtures; data guard test)
+│       ├── conftest.py         # synthetic tz-aware series/frame + tmp log fixtures
+│       ├── test_targets_leakage.py / test_features_leakage.py   # leakage guards
+│       ├── test_metrics.py / test_baselines.py / test_splits.py / test_backtest.py
+│       ├── test_models_schema.py / test_data_glob.py / test_neural.py (importorskip)
+│       ├── test_evaluate_logging_roundtrip.py
+│       └── test_persistence_baseline_matches_documented_values.py  # pins data vintage
+│
+├── notebooks/                  # experiment scripts (run with ./.venv/bin/python)
+│   ├── eda_wave.py / eda_wind.py / lead_lag.py / seasonality.py / feature_screen.py
+│   ├── baselines.py            # baselines on dev + crossover figure
+│   ├── select_backtest.py      # EXPLORATORY ladder + ablation (--section ...)
+│   ├── confirm.py              # CONFIRMATORY — score the 2025 blind once
+│   ├── make_figures.py         # rebuild result figures from the log (--plot-only)
+│   └── figures/                # generated PNGs (gitignored except README embeds)
+│
 ├── data/                       # gitignored — generated by `python -m qld_ckan {wave,wind}`
-├── experiments.jsonl           # append-only run log (committed)
-├── pyproject.toml              # deps + forecast/viz extras (managed by uv)
+├── experiments.jsonl           # append-only run log (one row per name × horizon)
+├── pyproject.toml              # deps + forecast/viz extras (managed by uv; py3.12, torch<2.7)
 └── uv.lock                     # pinned dependency graph (regen: uv lock)
 ```
+
+## Layering & data flow
+
+```
+qld_ckan  ──►  data/*.csv  ──►  forecast.data.build_dataset ──►  features / windows
+                                          │                              │
+                                          ▼                              ▼
+                              forecast.targets (y(t+h))   ──►  forecast.evaluate ──► experiments.jsonl
+                                          │                    (rolling_origin + bootstrap)      │
+                                   forecast.baselines / models / neural                          ▼
+                                                                                       viz.* ──► notebooks/figures/*.png
+```
+
+## Load-bearing design decisions
+
+- **Everything is indexed at the forecast origin `t`.** A horizon in hours maps to 30-min
+  steps via `constants.HORIZON_STEPS`; `targets.make_target` puts `y(t+steps)` on row `t`, so
+  features at `t` may use data up to `t` and the label looks ahead. `targets.align_xy` is the
+  single choke point that keeps X and y on shared origins.
+
+- **One forecaster protocol.** Baselines, the linear/tree wrappers, and the sequence NN all
+  expose `.fit(X, y) → self`, `.predict(X) → Series`, `.name`, so a single
+  `backtest.rolling_origin(model_factory, X, y, splitter, …)` scores every family on identical
+  folds. Baselines and the NN bind their own source series and use only `X.index` (the origins);
+  feature models consume the engineered matrix. `model_factory` is `(horizon_h, seed) → Forecaster`.
+
+- **Leakage is enforced, not assumed.** Window stats are shifted to end at `t-1`
+  (`features.rolling_features`), the rolling-origin splitter drops a horizon-length **embargo** at
+  every seam, and `tests/test_*_leakage.py` fail if either breaks.
+
+- **Exploratory vs confirmatory are physically separate.** Selection runs on **dev = 2015–2024**
+  via `select_backtest.py`; the **2025 blind** slice is scored exactly once by `confirm.py`
+  (`splits.FixedSplit`). The log tags every row with `mode` (`baseline`/`select`/`ablation`/
+  `nn_screen`/`confirm`).
+
+- **Skill leads, absolute RMSE is secondary.** Upstream data is periodically re-derived, so
+  `evaluate` reports skill vs persistence on shared rows plus a moving-block bootstrap CI and a
+  paired bootstrap verdict; `test_persistence_baseline_matches_documented_values` pins the
+  current-vintage persistence RMSE so a re-download is caught.
+
+- **The log is the results database.** `evaluate_and_log` appends one JSON row per
+  (name, horizon) to `experiments.jsonl`; `read_log()` returns it as a DataFrame and
+  `make_figures.py --plot-only` rebuilds the result figures from it without re-running the sweep.

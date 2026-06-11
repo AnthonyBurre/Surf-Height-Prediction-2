@@ -13,6 +13,7 @@ dist/
 # Notebooks
 .ipynb_checkpoints/
 */figures/*
+# ...but keep the figures the README embeds (regenerate the rest via notebooks/*.py)
 
 # macOS
 .DS_Store
